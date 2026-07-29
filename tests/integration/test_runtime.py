@@ -90,6 +90,64 @@ class FakeAppClient:
         raise TimeoutError
 
 
+class NotLoadedAppClient(FakeAppClient):
+    """模拟列表未加载、详情包含权威 Turn 状态的 App Server。"""
+
+    def __init__(self, *, fail_read: bool = False) -> None:
+        super().__init__()
+        self.fail_read = fail_read
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.requests.append((method, params))
+        updated_at = int(datetime.now(UTC).timestamp())
+        if method == "thread/list":
+            return {
+                "data": [
+                    {
+                        "id": "thread-stale",
+                        "name": "你有pdf工具么",
+                        "preview": "",
+                        "cwd": "/work/codex-gateway",
+                        "source": "appServer",
+                        "status": {"type": "notLoaded"},
+                        "createdAt": updated_at - 60,
+                        "updatedAt": updated_at,
+                        "turns": [],
+                    }
+                ],
+                "nextCursor": None,
+            }
+        if method == "thread/read":
+            if self.fail_read:
+                raise RuntimeError("模拟详情读取失败")
+            return {
+                "thread": {
+                    "id": "thread-stale",
+                    "name": "你有pdf工具么",
+                    "preview": "",
+                    "cwd": "/work/codex-gateway",
+                    "source": "appServer",
+                    "status": {"type": "notLoaded"},
+                    "createdAt": updated_at - 60,
+                    "updatedAt": updated_at,
+                    "turns": [
+                        {
+                            "id": "turn-stale",
+                            "status": "interrupted",
+                            "startedAt": updated_at - 60,
+                            "completedAt": None,
+                            "items": [],
+                        }
+                    ],
+                }
+            }
+        return {}
+
+
 class FakeObserver:
     def __init__(self, batches: list[list[SourceEvent]] | None = None) -> None:
         self.batches = list(batches or [])
@@ -123,6 +181,7 @@ def _runtime(
     tmp_path: Path,
     *,
     observer: FakeObserver | None = None,
+    app_client: FakeAppClient | None = None,
 ):
     from codex_task_monitor.runtime import RuntimeService
 
@@ -144,7 +203,7 @@ def _runtime(
     runtime = RuntimeService(
         config_service=config_service,
         repository=Repository(database),
-        app_client=FakeAppClient(),
+        app_client=app_client or FakeAppClient(),
         observer=observer or FakeObserver(),
         notifier=notifier,
         publisher=publisher,
@@ -341,3 +400,73 @@ async def test_stale_session_running_event_is_not_shown(
     await runtime.observe_once()
 
     assert runtime.get_task("thread-stale") is None
+
+
+@pytest.mark.asyncio
+async def test_not_loaded_thread_reconciles_running_to_interrupted(
+    tmp_path: Path,
+) -> None:
+    running = SourceEvent(
+        source=SourceKind.SESSION,
+        thread_id="thread-stale",
+        turn_id="turn-stale",
+        title="你有pdf工具么",
+        status=TaskStatus.RUNNING,
+        updated_at=datetime.now(UTC),
+    )
+    app_client = NotLoadedAppClient()
+    runtime, notifier, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running]]),
+        app_client=app_client,
+    )
+    await runtime.observe_once()
+    assert runtime.get_task("thread-stale").status is TaskStatus.RUNNING
+
+    await runtime.refresh_once()
+
+    methods = [method for method, _ in app_client.requests]
+    assert methods == ["thread/list", "thread/read"]
+    assert runtime.get_task("thread-stale").status is TaskStatus.INTERRUPTED
+    assert notifier.messages == []
+
+
+@pytest.mark.asyncio
+async def test_not_loaded_thread_without_active_snapshot_skips_details(
+    tmp_path: Path,
+) -> None:
+    app_client = NotLoadedAppClient()
+    runtime, _, _ = _runtime(tmp_path, app_client=app_client)
+
+    await runtime.refresh_once()
+
+    methods = [method for method, _ in app_client.requests]
+    assert methods == ["thread/list"]
+    assert runtime.get_task("thread-stale").status is TaskStatus.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_not_loaded_thread_keeps_running_when_detail_read_fails(
+    tmp_path: Path,
+) -> None:
+    running = SourceEvent(
+        source=SourceKind.SESSION,
+        thread_id="thread-stale",
+        turn_id="turn-stale",
+        title="你有pdf工具么",
+        status=TaskStatus.RUNNING,
+        updated_at=datetime.now(UTC),
+    )
+    app_client = NotLoadedAppClient(fail_read=True)
+    runtime, _, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running]]),
+        app_client=app_client,
+    )
+    await runtime.observe_once()
+
+    await runtime.refresh_once()
+
+    methods = [method for method, _ in app_client.requests]
+    assert methods == ["thread/list", "thread/read"]
+    assert runtime.get_task("thread-stale").status is TaskStatus.RUNNING

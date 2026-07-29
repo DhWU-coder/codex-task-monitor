@@ -25,6 +25,13 @@ from codex_task_monitor.storage.repository import Repository
 
 LOGGER = logging.getLogger(__name__)
 SOURCE_KINDS = ["cli", "vscode", "exec", "appServer", "unknown"]
+ACTIVE_STATUSES = frozenset(
+    {
+        TaskStatus.RUNNING,
+        TaskStatus.WAITING_APPROVAL,
+        TaskStatus.WAITING_INPUT,
+    }
+)
 
 
 class AppClientProtocol(Protocol):
@@ -184,11 +191,8 @@ class RuntimeService:
                 snapshot = map_thread(raw_thread)
                 if not _should_include_snapshot(snapshot, recent_cutoff):
                     continue
-                if snapshot.status in {
-                    TaskStatus.RUNNING,
-                    TaskStatus.WAITING_APPROVAL,
-                    TaskStatus.WAITING_INPUT,
-                }:
+                current = self.aggregator.get(snapshot.thread_id)
+                if _needs_thread_details(snapshot, current):
                     snapshot = await self._read_active_thread(snapshot)
                 await self._accept_snapshot(
                     snapshot,
@@ -553,13 +557,24 @@ def _should_include_snapshot(
 ) -> bool:
     """始终保留活动任务，只保留时间窗内的其他任务。"""
 
-    if snapshot.status in {
-        TaskStatus.RUNNING,
-        TaskStatus.WAITING_APPROVAL,
-        TaskStatus.WAITING_INPUT,
-    }:
+    if snapshot.status in ACTIVE_STATUSES:
         return True
     return snapshot.updated_at >= recent_cutoff
+
+
+def _needs_thread_details(
+    listed: TaskSnapshot,
+    current: TaskSnapshot | None,
+) -> bool:
+    """判断列表快照是否需要通过线程详情补充权威状态。"""
+
+    if listed.status in ACTIVE_STATUSES:
+        return True
+    return (
+        listed.status is TaskStatus.UNKNOWN
+        and current is not None
+        and current.status in ACTIVE_STATUSES
+    )
 
 
 async def _wait_or_stop(stop_event: asyncio.Event, delay: float) -> None:
