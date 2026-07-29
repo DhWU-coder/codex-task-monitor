@@ -1,0 +1,1 @@
+{"timestamp":"2026-07-29T10:01:03Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-test","last_agent_message":"已完成测试功能。","started_at":"2026-07-29T10:00:03Z","completed_at":"2026-07-29T10:01:03Z","duration_ms":60000}}

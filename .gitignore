@@ -1,0 +1,14 @@
+.idea/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.playwright-cli/
+*.egg-info/
+*.py[cod]
+config.yaml
+data/
+frontend/node_modules/
+frontend/coverage/
+codex_task_monitor/web/static/

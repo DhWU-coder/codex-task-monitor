@@ -1,0 +1,4 @@
+{"timestamp":"2026-07-29T10:00:00Z","type":"session_meta","payload":{"id":"thread-test","cwd":"/workspace/sample-project","source":"appServer"}}
+{"timestamp":"2026-07-29T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"实现测试功能"}}
+{"timestamp":"2026-07-29T10:00:02Z","type":"turn_context","payload":{"turn_id":"turn-test","cwd":"/workspace/sample-project"}}
+{"timestamp":"2026-07-29T10:00:03Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-test","started_at":"2026-07-29T10:00:03Z"}}
