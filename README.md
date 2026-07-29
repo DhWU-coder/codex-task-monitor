@@ -28,22 +28,53 @@ http://127.0.0.1:6664
 
 ## 安装
 
-在项目目录中执行：
+### 远程一行安装
+
+本机尚未下载仓库时，执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DhWU-coder/codex-task-monitor/main/install.sh | bash
+```
+
+脚本默认把源码安装到 `~/.local/share/codex-task-monitor`，并在
+`~/.local/bin/codex-task-monitor` 创建全局命令链接。以后重复执行同一条命令会安全更新已有安装；如果安装目录有未提交改动，脚本会停止而不会覆盖这些改动。
+
+### 已下载仓库后一键安装
+
+进入仓库根目录执行：
+
+```bash
+bash install.sh
+```
+
+这种方式直接安装当前仓库代码，全局命令会指向当前仓库的 `.venv`。两种安装方式都会创建或复用虚拟环境、安装 Python 项目、按锁文件安装前端依赖并构建 UI，无需执行 `source .venv/bin/activate`。
+
+安装完成后可从任意目录启动：
+
+```bash
+codex-task-monitor start
+```
+
+命令会打印实际 UI 地址。如果 `~/.local/bin` 尚未加入 `PATH`，安装脚本会打印需要加入 `~/.zshrc` 或 `~/.bashrc` 的配置行。
+
+### 手动安装
+
+需要逐步排查安装问题时，可在项目目录中执行：
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 cd frontend
-npm install
+npm ci
 npm run build
 cd ..
 ```
 
 安装完成后，命令入口位于 `.venv/bin/codex-task-monitor`。激活虚拟环境后也可以直接使用 `codex-task-monitor`。
 
-### 安装全局 CLI
+### 手动创建全局 CLI
 
-如果希望不激活虚拟环境，并在任意终端目录直接执行命令，可以把虚拟环境中的入口链接到用户级 PATH。请在项目根目录执行：
+一键安装脚本已经自动完成这一步。仅在手动安装时，可把虚拟环境中的入口链接到用户级 PATH：
 
 ```bash
 mkdir -p ~/.local/bin
@@ -70,7 +101,7 @@ export PATH="$HOME/.local/bin:$PATH"
 codex-task-monitor start
 ```
 
-全局入口仍使用项目自己的 `.venv` 和源码，因此不会污染系统 Python。移动或删除项目目录、重建 `.venv` 后，需要重新创建该链接。
+全局入口仍使用项目自己的 `.venv` 和源码，因此不会污染系统 Python。移动或删除项目目录后，需要重新运行安装脚本或手动创建链接。
 
 ## CLI
 
