@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from codex_task_monitor.config.service import ConfigService
@@ -25,29 +26,41 @@ def _config(tmp_path: Path, *, port: int = 6664) -> ConfigService:
     return service
 
 
-def test_run_prints_default_ui_url(
+@pytest.mark.parametrize("command_name", ["run", "start"])
+def test_start_commands_launch_background_service(
     tmp_path: Path,
     monkeypatch,
+    command_name: str,
 ) -> None:
     from codex_task_monitor import cli
 
     service = _config(tmp_path)
     monkeypatch.setenv("CODEX_TASK_MONITOR_CONFIG", str(service.path))
     called: list[Path] = []
+
+    def start_background(config_service: ConfigService) -> cli.StartResult:
+        called.append(config_service.path)
+        return cli.StartResult("http://127.0.0.1:6664", False)
+
+    monkeypatch.setattr(
+        cli,
+        "_start_background",
+        start_background,
+    )
     monkeypatch.setattr(
         cli,
         "_run_foreground",
-        lambda config_service: called.append(config_service.path),
+        lambda _service: pytest.fail("公开启动命令不应进入前台运行"),
     )
 
-    result = CliRunner().invoke(cli.app, ["run"])
+    result = CliRunner().invoke(cli.app, [command_name])
 
     assert result.exit_code == 0
     assert "UI 地址：http://127.0.0.1:6664" in result.stdout
     assert called == [service.path]
 
 
-def test_run_uses_configured_port(
+def test_run_uses_configured_background_url(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -55,12 +68,78 @@ def test_run_uses_configured_port(
 
     service = _config(tmp_path, port=6670)
     monkeypatch.setenv("CODEX_TASK_MONITOR_CONFIG", str(service.path))
-    monkeypatch.setattr(cli, "_run_foreground", lambda _: None)
+    monkeypatch.setattr(
+        cli,
+        "_start_background",
+        lambda _service: cli.StartResult(
+            "http://127.0.0.1:6670",
+            False,
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_foreground",
+        lambda _service: pytest.fail("run 不应进入前台运行"),
+    )
 
     result = CliRunner().invoke(cli.app, ["run"])
 
     assert result.exit_code == 0
     assert "UI 地址：http://127.0.0.1:6670" in result.stdout
+
+
+@pytest.mark.parametrize("command_name", ["run", "start"])
+def test_start_commands_report_existing_background_service(
+    tmp_path: Path,
+    monkeypatch,
+    command_name: str,
+) -> None:
+    from codex_task_monitor import cli
+
+    service = _config(tmp_path)
+    monkeypatch.setenv("CODEX_TASK_MONITOR_CONFIG", str(service.path))
+    monkeypatch.setattr(
+        cli,
+        "_start_background",
+        lambda _service: cli.StartResult(
+            "http://127.0.0.1:6664",
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_foreground",
+        lambda _service: pytest.fail("公开启动命令不应进入前台运行"),
+    )
+
+    result = CliRunner().invoke(cli.app, [command_name])
+
+    assert result.exit_code == 0
+    assert "监控器已在运行。" in result.stdout
+    assert "UI 地址：http://127.0.0.1:6664" in result.stdout
+
+
+@pytest.mark.parametrize("command_name", ["run", "start"])
+def test_start_commands_report_background_failure(
+    tmp_path: Path,
+    monkeypatch,
+    command_name: str,
+) -> None:
+    from codex_task_monitor import cli
+
+    service = _config(tmp_path)
+    monkeypatch.setenv("CODEX_TASK_MONITOR_CONFIG", str(service.path))
+
+    def raise_start_error(_service: ConfigService) -> cli.StartResult:
+        raise RuntimeError("模拟后台启动失败")
+
+    monkeypatch.setattr(cli, "_start_background", raise_start_error)
+    monkeypatch.setattr(cli, "_run_foreground", raise_start_error)
+
+    result = CliRunner().invoke(cli.app, [command_name])
+
+    assert result.exit_code == 1
+    assert "启动失败：模拟后台启动失败" in result.stderr
 
 
 def test_start_waits_for_health_and_writes_private_state(

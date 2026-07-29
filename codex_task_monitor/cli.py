@@ -60,16 +60,20 @@ class StopResult:
 
 @app.command("run")
 def run_command() -> None:
-    """在前台运行监控器。"""
+    """在后台启动监控器，与 start 等价。"""
 
-    service = _load_config_service()
-    typer.echo(f"UI 地址：{_ui_url(service)}")
-    _run_foreground(service)
+    _launch_background_command()
 
 
 @app.command("start")
 def start_command() -> None:
-    """在后台启动监控器。"""
+    """在后台启动监控器，与 run 等价。"""
+
+    _launch_background_command()
+
+
+def _launch_background_command() -> None:
+    """执行公开启动命令共用的后台启动与输出逻辑。"""
 
     service = _load_config_service()
     try:
@@ -107,7 +111,7 @@ def restart_command() -> None:
 
 @app.command("_serve", hidden=True)
 def serve_command() -> None:
-    """供 start 启动的内部前台服务命令。"""
+    """供 run 和 start 启动的内部前台服务命令。"""
 
     _run_foreground(_load_config_service())
 

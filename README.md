@@ -105,13 +105,13 @@ codex-task-monitor start
 
 ## CLI
 
-前台运行，日志直接显示在当前终端：
+后台启动，与 `start` 完全等价：
 
 ```bash
 codex-task-monitor run
 ```
 
-后台启动，健康检查通过后返回：
+后台启动，与 `run` 完全等价：
 
 ```bash
 codex-task-monitor start
@@ -129,7 +129,7 @@ codex-task-monitor stop
 codex-task-monitor restart
 ```
 
-`run`、`start` 和 `restart` 会打印实际 UI 地址。重复执行 `start` 不会创建第二个服务进程。
+`run` 和 `start` 都会在健康检查通过后返回终端并打印实际 UI 地址。两者都是幂等命令，服务已经运行时不会创建第二个进程。`restart` 会重启后台服务并打印新地址。
 
 ## 配置
 
