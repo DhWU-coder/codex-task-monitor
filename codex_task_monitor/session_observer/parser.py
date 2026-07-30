@@ -10,6 +10,18 @@ from codex_task_monitor.models import SourceEvent, SourceKind, TaskStatus
 TOKEN_PATTERN = re.compile(
     r"(?i)(Authorization\s*:\s*Bearer\s+)\S+|\b[atu]-[A-Za-z0-9._-]{6,}\b"
 )
+BOUNDARY_LIFECYCLE_TYPES = frozenset(
+    {
+        "task_started",
+        "task_complete",
+        "task_failed",
+        "turn_failed",
+        "turn_aborted",
+        "task_interrupted",
+        "turn_interrupted",
+        "approval_requested",
+    }
+)
 
 
 class SessionParser:
@@ -24,6 +36,9 @@ class SessionParser:
         self.title: str | None = None
         self.started_at: datetime | None = None
         self.latest_summary = ""
+        self._pending_boundary_lifecycle: (
+            tuple[dict[str, Any], bool] | None
+        ) = None
 
     def parse(
         self,
@@ -40,6 +55,7 @@ class SessionParser:
         if record_type == "session_meta":
             return self._session_meta(record, payload, baseline)
         if not self._in_canonical_section():
+            self._remember_boundary_lifecycle(record, payload, baseline)
             return []
         if record_type == "turn_context":
             self.current_turn_id = _text(payload.get("turn_id")) or self.current_turn_id
@@ -55,6 +71,7 @@ class SessionParser:
         """在跳跃读取后把解析区段恢复为当前文件的规范任务。"""
 
         self.section_thread_id = self.canonical_thread_id
+        self._pending_boundary_lifecycle = None
 
     def _session_meta(
         self,
@@ -70,6 +87,8 @@ class SessionParser:
         )
         if not thread_id:
             return []
+        pending_lifecycle = self._pending_boundary_lifecycle
+        self._pending_boundary_lifecycle = None
         self.section_thread_id = thread_id
         if self.canonical_thread_id is None:
             self.canonical_thread_id = thread_id
@@ -79,13 +98,43 @@ class SessionParser:
         if not self._in_canonical_section():
             return []
         self.cwd = _text(payload.get("cwd")) or self.cwd
-        return [
+        events = [
             self._event(
                 record,
                 status=TaskStatus.UNKNOWN,
                 baseline=baseline,
             )
         ]
+        if pending_lifecycle is None:
+            return events
+        pending_record, pending_baseline = pending_lifecycle
+        pending_payload = pending_record.get("payload")
+        if (
+            isinstance(pending_payload, dict)
+            and pending_payload.get("type") == "task_started"
+        ):
+            events.extend(
+                self._event_message(
+                    pending_record,
+                    pending_payload,
+                    pending_baseline,
+                )
+            )
+        return events
+
+    def _remember_boundary_lifecycle(
+        self,
+        record: dict[str, Any],
+        payload: dict[str, Any],
+        baseline: bool,
+    ) -> None:
+        """暂存祖先回放边界处最近的一条生命周期消息。"""
+
+        if (
+            record.get("type") == "event_msg"
+            and payload.get("type") in BOUNDARY_LIFECYCLE_TYPES
+        ):
+            self._pending_boundary_lifecycle = (record, baseline)
 
     def _event_message(
         self,

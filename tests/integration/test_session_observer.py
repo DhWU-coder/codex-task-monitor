@@ -279,6 +279,135 @@ async def test_bootstrap_backward_scan_skips_replayed_ancestor_lifecycle(
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_finds_lifecycle_before_canonical_metadata(
+    tmp_path: Path,
+) -> None:
+    from codex_task_monitor.session_observer.observer import SessionObserver
+
+    session_file = tmp_path / "sessions" / "rollout.jsonl"
+    session_file.parent.mkdir(parents=True)
+    session_file.write_bytes(
+        b"".join(
+            [
+                _json_line(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": "thread-child"},
+                    }
+                ),
+                _json_line(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": "thread-parent"},
+                    }
+                ),
+                _json_line(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "turn_id": "turn-parent",
+                        },
+                    }
+                ),
+                _json_line(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_started",
+                            "turn_id": "turn-child",
+                        },
+                    }
+                ),
+                _json_line(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": "thread-child"},
+                    }
+                ),
+                b'{"type":"future_record","payload":{"padding":"'
+                + b"x" * 4096
+                + b'"}}\n',
+            ]
+        )
+    )
+    observer = SessionObserver(
+        tmp_path / "sessions",
+        bootstrap_head_bytes=128,
+        bootstrap_tail_bytes=64,
+        bootstrap_lifecycle_scan_bytes=64 * 1024,
+        bootstrap_scan_chunk_bytes=256,
+    )
+
+    events = await observer.scan_once()
+
+    running = [event for event in events if event.status is TaskStatus.RUNNING]
+    assert [
+        (event.thread_id, event.turn_id) for event in running
+    ] == [("thread-child", "turn-child")]
+    assert running[0].baseline is True
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_does_not_assign_terminal_before_canonical_metadata(
+    tmp_path: Path,
+) -> None:
+    from codex_task_monitor.session_observer.observer import SessionObserver
+
+    session_file = tmp_path / "sessions" / "rollout.jsonl"
+    session_file.parent.mkdir(parents=True)
+    session_file.write_bytes(
+        b"".join(
+            [
+                _json_line(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": "thread-child"},
+                    }
+                ),
+                _json_line(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": "thread-parent"},
+                    }
+                ),
+                _json_line(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "turn_id": "turn-parent",
+                        },
+                    }
+                ),
+                _json_line(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": "thread-child"},
+                    }
+                ),
+                b'{"type":"future_record","payload":{"padding":"'
+                + b"x" * 4096
+                + b'"}}\n',
+            ]
+        )
+    )
+    observer = SessionObserver(
+        tmp_path / "sessions",
+        bootstrap_head_bytes=128,
+        bootstrap_tail_bytes=64,
+        bootstrap_lifecycle_scan_bytes=64 * 1024,
+        bootstrap_scan_chunk_bytes=256,
+    )
+
+    events = await observer.scan_once()
+
+    assert not any(
+        event.status is TaskStatus.COMPLETED for event in events
+    )
+
+
+@pytest.mark.asyncio
 async def test_incremental_completion_is_not_baseline(tmp_path: Path) -> None:
     from codex_task_monitor.session_observer.observer import SessionObserver
 

@@ -365,6 +365,11 @@ select:focus-visible {
   background: var(--teal);
 }
 
+.task-card[data-status="completed"]::before,
+.task-card[data-status="manually_completed"]::before {
+  background: var(--status-neutral);
+}
+
 .task-card[data-status="waiting_approval"]::before,
 .task-card[data-status="waiting_input"]::before {
   background: var(--attention-line);
@@ -407,6 +412,11 @@ select:focus-visible {
 .status-badge[data-status="running"] {
   color: var(--teal-dark);
   background: var(--teal-soft);
+}
+
+.status-badge[data-status="manually_completed"] {
+  color: var(--neutral-badge-text);
+  background: var(--neutral-badge);
 }
 
 .status-badge[data-status="waiting_approval"],

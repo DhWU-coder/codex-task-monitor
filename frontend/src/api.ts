@@ -91,6 +91,15 @@ export function stopWatch(
   )
 }
 
+export function markManualCompletion(
+  threadId: string,
+): Promise<TaskSnapshot> {
+  return request(
+    `/api/tasks/${encodeURIComponent(threadId)}/manual-completion`,
+    mutationOptions("POST"),
+  )
+}
+
 export function getConfig(): Promise<PublicConfig> {
   return request("/api/config")
 }

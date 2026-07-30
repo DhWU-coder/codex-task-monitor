@@ -6,6 +6,7 @@ import {
   getConfig,
   getHealth,
   getTasks,
+  markManualCompletion,
   startWatch,
   stopWatch,
 } from "./api"
@@ -55,7 +56,12 @@ const activeStatuses = new Set([
   "waiting_input",
 ])
 const attentionStatuses = new Set(["waiting_approval", "waiting_input"])
-const terminalStatuses = new Set(["completed", "failed", "interrupted"])
+const terminalStatuses = new Set([
+  "completed",
+  "failed",
+  "interrupted",
+  "manually_completed",
+])
 
 const counts = computed<Record<TaskFilter, number>>(() => ({
   running: tasks.value.filter((task) => task.status === "running").length,
@@ -193,6 +199,29 @@ async function stopTaskWatch(task: TaskSnapshot): Promise<void> {
   }
 }
 
+async function completeTaskManually(task: TaskSnapshot): Promise<void> {
+  if (!activeStatuses.has(task.status)) {
+    return
+  }
+  const confirmed = window.confirm(
+    "确认将当前轮次标记为已结束？同一轮后续更新将被忽略。",
+  )
+  if (!confirmed) {
+    return
+  }
+  setBusy(task.thread_id, true)
+  errorMessage.value = ""
+  try {
+    const updated = await markManualCompletion(task.thread_id)
+    replaceTask(task.thread_id, updated)
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "标记本轮已结束失败"
+  } finally {
+    setBusy(task.thread_id, false)
+  }
+}
+
 function replaceTask(
   threadId: string,
   changes: Partial<TaskSnapshot>,
@@ -308,6 +337,7 @@ onUnmounted(() => {
           :busy="busyTasks.has(task.thread_id)"
           @watch="watchTask(task, $event)"
           @stop="stopTaskWatch(task)"
+          @manual-completion="completeTaskManually(task)"
           @details="selectedTask = task"
         />
       </div>

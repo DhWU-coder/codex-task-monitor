@@ -9,6 +9,7 @@ const props = defineProps<{
 defineEmits<{
   watch: [mode: WatchMode]
   stop: []
+  manualCompletion: []
   details: []
 }>()
 
@@ -19,6 +20,7 @@ const statusLabels: Record<TaskStatus, string> = {
   completed: "已完成",
   failed: "失败",
   interrupted: "已中断",
+  manually_completed: "手动结束",
   unknown: "状态未知",
   source_error: "数据源异常",
 }
@@ -119,6 +121,15 @@ function watchLabel(mode: WatchMode | null): string {
             持续监控
           </button>
         </template>
+        <button
+          type="button"
+          class="button button-secondary"
+          :disabled="busy"
+          data-action="manual-completion"
+          @click="$emit('manualCompletion')"
+        >
+          标记本轮已结束
+        </button>
       </template>
       <button
         type="button"

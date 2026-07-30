@@ -57,6 +57,24 @@ def create_api_router(
             ) from error
         return {"ok": True, "mode": payload.mode.value}
 
+    @router.post("/api/tasks/{thread_id}/manual-completion")
+    async def mark_manual_completion(thread_id: str) -> dict[str, Any]:
+        """把活动任务的当前轮次标记为手动结束。"""
+
+        try:
+            task = await runtime.mark_manual_completion(thread_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail="任务不存在",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="任务当前轮次已经结束",
+            ) from error
+        return task.model_dump(mode="json")
+
     @router.delete("/api/tasks/{thread_id}/watch")
     async def stop_watch(thread_id: str) -> dict[str, bool]:
         """停止指定任务的监控。"""

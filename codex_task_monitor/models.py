@@ -15,6 +15,7 @@ class TaskStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+    MANUALLY_COMPLETED = "manually_completed"
     UNKNOWN = "unknown"
     SOURCE_ERROR = "source_error"
 
@@ -92,6 +93,15 @@ class WatchRecord(DomainModel):
     active: bool = True
     created_at: datetime
     updated_at: datetime
+
+
+class ManualCompletionRecord(DomainModel):
+    """用户手动结束某个任务轮次的持久化记录。"""
+
+    thread_id: str
+    turn_id: str | None = None
+    started_at: datetime | None = None
+    marked_at: datetime
 
 
 class NotificationEvent(DomainModel):

@@ -189,22 +189,34 @@ class SessionObserver:
         if not canonical_thread_id:
             return None
         candidate: dict[str, Any] | None = None
+        following_section_thread_id: str | None = None
         try:
             lines = self._iter_lines_reverse(path, size)
             for raw_line in lines:
                 record = self._decode_record(raw_line)
                 if record is None:
                     continue
+                section_thread_id = self._session_meta_thread_id(record)
+                if section_thread_id is not None:
+                    if (
+                        candidate is not None
+                        and section_thread_id == canonical_thread_id
+                    ):
+                        return candidate
+                    candidate = None
+                    following_section_thread_id = section_thread_id
+                    continue
                 if candidate is None:
                     if self._is_lifecycle_record(record):
+                        if (
+                            following_section_thread_id
+                            == canonical_thread_id
+                            and self._lifecycle_message_type(record)
+                            == "task_started"
+                        ):
+                            return record
                         candidate = record
                     continue
-                section_thread_id = self._session_meta_thread_id(record)
-                if section_thread_id is None:
-                    continue
-                if section_thread_id == canonical_thread_id:
-                    return candidate
-                candidate = None
         except OSError:
             return None
         return None
@@ -283,13 +295,22 @@ class SessionObserver:
     def _is_lifecycle_record(record: dict[str, Any]) -> bool:
         """判断记录是否为支持的任务生命周期消息。"""
 
-        if record.get("type") != "event_msg":
-            return False
-        payload = record.get("payload")
-        return bool(
-            isinstance(payload, dict)
-            and payload.get("type") in LIFECYCLE_MESSAGE_TYPES
+        return (
+            SessionObserver._lifecycle_message_type(record)
+            in LIFECYCLE_MESSAGE_TYPES
         )
+
+    @staticmethod
+    def _lifecycle_message_type(record: dict[str, Any]) -> str | None:
+        """读取事件记录中的生命周期消息类型。"""
+
+        if record.get("type") != "event_msg":
+            return None
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("type")
+        return value if isinstance(value, str) else None
 
     @staticmethod
     def _session_meta_thread_id(record: dict[str, Any]) -> str | None:

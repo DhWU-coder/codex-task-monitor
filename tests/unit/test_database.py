@@ -1,5 +1,6 @@
 import os
 import stat
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -65,6 +66,71 @@ def test_saved_watch_round_trips_turn_and_baseline(tmp_path: Path) -> None:
     assert watch.turn_id == "turn-1"
     assert watch.baseline_status is TaskStatus.RUNNING
     assert watch.mode is WatchMode.CURRENT_TURN
+
+
+def test_manual_completion_round_trips_overwrites_and_deletes(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path / "data" / "monitor.db")
+    started_at = datetime(2026, 7, 30, 10, 0, tzinfo=UTC)
+    first_marked_at = started_at + timedelta(minutes=5)
+    second_marked_at = started_at + timedelta(minutes=10)
+
+    first = repository.save_manual_completion(
+        thread_id="thread-1",
+        turn_id="turn-1",
+        started_at=started_at,
+        marked_at=first_marked_at,
+    )
+    second = repository.save_manual_completion(
+        thread_id="thread-1",
+        turn_id="turn-2",
+        started_at=started_at + timedelta(minutes=6),
+        marked_at=second_marked_at,
+    )
+
+    assert first.thread_id == "thread-1"
+    assert first.turn_id == "turn-1"
+    assert first.started_at == started_at
+    assert second.turn_id == "turn-2"
+    assert second.marked_at == second_marked_at
+    assert repository.get_manual_completion("thread-1") == second
+
+    repository.delete_manual_completion("thread-1")
+
+    assert repository.get_manual_completion("thread-1") is None
+
+
+def test_manual_completion_recovery_keeps_only_persistent_watch(
+    tmp_path: Path,
+) -> None:
+    from codex_task_monitor.models import TaskStatus, WatchMode
+
+    repository = _repository(tmp_path / "data" / "monitor.db")
+    repository.save_watch(
+        thread_id="persistent",
+        mode=WatchMode.PERSISTENT,
+        active=True,
+    )
+    repository.save_watch(
+        thread_id="current",
+        mode=WatchMode.CURRENT_TURN,
+        active=True,
+    )
+
+    repository.restore_watches(
+        {
+            "persistent": TaskStatus.MANUALLY_COMPLETED,
+            "current": TaskStatus.MANUALLY_COMPLETED,
+        }
+    )
+
+    persistent = repository.get_watch("persistent")
+    current = repository.get_watch("current")
+    assert persistent is not None
+    assert persistent.active is True
+    assert current is not None
+    assert current.active is False
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows 不支持 POSIX 权限位")

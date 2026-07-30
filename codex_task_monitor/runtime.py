@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from codex_task_monitor.codex_adapter.mapper import map_notification, map_thread
 from codex_task_monitor.config.service import ConfigService
 from codex_task_monitor.models import (
+    ManualCompletionRecord,
     SourceEvent,
     SourceHealth,
     SourceKind,
@@ -260,7 +261,16 @@ class RuntimeService:
         ]
         applied_events: list[tuple[SourceEvent, TaskSnapshot]] = []
         for event in accepted_events:
+            manual_completion = self._prepare_manual_completion(
+                thread_id=event.thread_id,
+                turn_id=event.turn_id,
+                started_at=event.started_at,
+            )
             snapshot = self.aggregator.apply(event)
+            snapshot = self._apply_manual_completion(
+                snapshot,
+                manual_completion,
+            )
             applied_events.append((event, snapshot))
         self._deactivate_internal_watches()
         for event, snapshot in applied_events:
@@ -296,7 +306,16 @@ class RuntimeService:
         event = map_notification(method, params)
         if event is None:
             return
+        manual_completion = self._prepare_manual_completion(
+            thread_id=event.thread_id,
+            turn_id=event.turn_id,
+            started_at=event.started_at,
+        )
         snapshot = self.aggregator.apply(event)
+        snapshot = self._apply_manual_completion(
+            snapshot,
+            manual_completion,
+        )
         if not self.aggregator.is_hidden(event.thread_id):
             await self._process_snapshot(snapshot, allow_notifications=True)
         await self._publish_tasks()
@@ -322,6 +341,51 @@ class RuntimeService:
         await self.monitoring.stop_watch(thread_id)
         self.aggregator.set_watch(thread_id, monitored=False, mode=None)
         await self._publish_tasks()
+
+    async def mark_manual_completion(
+        self,
+        thread_id: str,
+    ) -> TaskSnapshot:
+        """把活动任务的当前轮次持久化标记为手动结束。"""
+
+        task = self.aggregator.get(thread_id)
+        if task is None:
+            raise KeyError(thread_id)
+        if task.status not in ACTIVE_STATUSES:
+            raise ValueError("只能把正在运行或等待处理的任务标记为已结束")
+
+        marked_at = datetime.now(UTC)
+        self.repository.save_manual_completion(
+            thread_id=thread_id,
+            turn_id=task.turn_id,
+            started_at=task.started_at,
+            marked_at=marked_at,
+        )
+        marked = self.aggregator.mark_manually_completed(
+            thread_id,
+            completed_at=marked_at,
+        )
+        if marked is None:
+            raise KeyError(thread_id)
+
+        watch = self.repository.get_watch(thread_id)
+        if (
+            watch is not None
+            and watch.active
+            and watch.mode is WatchMode.CURRENT_TURN
+        ):
+            self.repository.deactivate_watch(thread_id)
+            self.aggregator.set_watch(
+                thread_id,
+                monitored=False,
+                mode=None,
+            )
+        await self._process_snapshot(marked, allow_notifications=False)
+        await self._publish_tasks()
+        refreshed = self.get_task(thread_id)
+        if refreshed is None:
+            raise KeyError(thread_id)
+        return refreshed
 
     async def test_notification(self) -> str:
         """通过当前飞书配置显式发送测试消息。"""
@@ -447,11 +511,57 @@ class RuntimeService:
                 "branch": info.branch or snapshot.branch,
             }
         )
+        manual_completion = self._prepare_manual_completion(
+            thread_id=enriched.thread_id,
+            turn_id=enriched.turn_id,
+            started_at=enriched.started_at,
+        )
         merged = self.aggregator.apply_snapshot(enriched)
+        merged = self._apply_manual_completion(
+            merged,
+            manual_completion,
+        )
         await self._process_snapshot(
             merged,
             allow_notifications=allow_notifications,
         )
+
+    def _prepare_manual_completion(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str | None,
+        started_at: datetime | None,
+    ) -> ManualCompletionRecord | None:
+        """在合并来源事件前判断手动结束记录是否仍属于当前轮。"""
+
+        record = self.repository.get_manual_completion(thread_id)
+        if record is None:
+            return None
+        if _is_new_generation(
+            record,
+            turn_id=turn_id,
+            started_at=started_at,
+        ):
+            self.repository.delete_manual_completion(thread_id)
+            self.aggregator.clear_manual_completion(thread_id)
+            return None
+        return record
+
+    def _apply_manual_completion(
+        self,
+        snapshot: TaskSnapshot,
+        record: ManualCompletionRecord | None,
+    ) -> TaskSnapshot:
+        """把仍匹配当前轮的快照重新投影为手动结束。"""
+
+        if record is None:
+            return snapshot
+        marked = self.aggregator.mark_manually_completed(
+            snapshot.thread_id,
+            completed_at=record.marked_at,
+        )
+        return marked or snapshot
 
     async def _process_snapshot(
         self,
@@ -462,6 +572,8 @@ class RuntimeService:
         """持久化快照并发送监控产生的通知。"""
 
         self.repository.save_snapshot(snapshot)
+        if snapshot.status is TaskStatus.MANUALLY_COMPLETED:
+            return
         if not allow_notifications:
             return
         events = await self.monitoring.apply(snapshot)
@@ -611,6 +723,21 @@ def _notification_enabled(status: TaskStatus, config: Any) -> bool:
         TaskStatus.WAITING_APPROVAL: config.notify_waiting_approval,
     }
     return bool(mapping.get(status, False))
+
+
+def _is_new_generation(
+    record: ManualCompletionRecord,
+    *,
+    turn_id: str | None,
+    started_at: datetime | None,
+) -> bool:
+    """根据轮次 ID 和开始时间判断是否已启动新一轮。"""
+
+    if record.turn_id and turn_id:
+        return record.turn_id != turn_id
+    if record.turn_id:
+        return False
+    return bool(started_at and started_at > record.marked_at)
 
 
 def _should_include_snapshot(

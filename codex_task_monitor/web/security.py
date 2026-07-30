@@ -73,7 +73,13 @@ def install_security_middleware(
                     {"detail": "CSRF 校验失败"},
                     status_code=403,
                 )
-            if request.method != "DELETE":
+            content_length = request.headers.get("content-length", "")
+            transfer_encoding = request.headers.get("transfer-encoding", "")
+            has_body = (
+                content_length not in {"", "0"}
+                or bool(transfer_encoding)
+            )
+            if request.method != "DELETE" and has_body:
                 content_type = request.headers.get("content-type", "")
                 if not content_type.startswith("application/json"):
                     return JSONResponse(

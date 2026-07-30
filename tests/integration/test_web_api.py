@@ -51,6 +51,26 @@ class FakeRuntime:
     async def stop_watch(self, thread_id: str) -> None:
         self.watch_mode = None
 
+    async def mark_manual_completion(
+        self,
+        thread_id: str,
+    ) -> TaskSnapshot:
+        if thread_id != self.task.thread_id:
+            raise KeyError(thread_id)
+        if self.task.status not in {
+            TaskStatus.RUNNING,
+            TaskStatus.WAITING_APPROVAL,
+            TaskStatus.WAITING_INPUT,
+        }:
+            raise ValueError("任务已结束")
+        self.task = self.task.model_copy(
+            update={
+                "status": TaskStatus.MANUALLY_COMPLETED,
+                "completed_at": datetime.now(UTC),
+            }
+        )
+        return self.task
+
     async def test_notification(self) -> str:
         self.test_messages += 1
         return "om_test"
@@ -127,6 +147,50 @@ def test_watch_endpoints_require_and_accept_csrf(tmp_path: Path) -> None:
     assert accepted.status_code == 200
     assert runtime.watch_mode is None
     assert stopped.status_code == 200
+
+
+def test_manual_completion_requires_csrf_and_returns_task(
+    tmp_path: Path,
+) -> None:
+    client, runtime, _ = _client(tmp_path)
+
+    rejected = client.post("/api/tasks/thread-1/manual-completion")
+    accepted = client.post(
+        "/api/tasks/thread-1/manual-completion",
+        headers=_csrf_headers(client),
+    )
+
+    assert rejected.status_code == 403
+    assert accepted.status_code == 200
+    assert accepted.json()["status"] == "manually_completed"
+    assert runtime.task.status is TaskStatus.MANUALLY_COMPLETED
+
+
+def test_manual_completion_missing_task_returns_404(tmp_path: Path) -> None:
+    client, _, _ = _client(tmp_path)
+
+    response = client.post(
+        "/api/tasks/missing/manual-completion",
+        headers=_csrf_headers(client),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "任务不存在"
+
+
+def test_manual_completion_ended_task_returns_409(tmp_path: Path) -> None:
+    client, runtime, _ = _client(tmp_path)
+    runtime.task = runtime.task.model_copy(
+        update={"status": TaskStatus.COMPLETED}
+    )
+
+    response = client.post(
+        "/api/tasks/thread-1/manual-completion",
+        headers=_csrf_headers(client),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "任务当前轮次已经结束"
 
 
 def test_config_response_never_contains_secret(tmp_path: Path) -> None:

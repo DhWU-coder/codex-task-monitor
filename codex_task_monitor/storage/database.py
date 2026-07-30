@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS task_snapshots (
     payload TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS manual_completions (
+    thread_id TEXT PRIMARY KEY,
+    turn_id TEXT,
+    started_at TEXT,
+    marked_at TEXT NOT NULL
+);
 """
 
 

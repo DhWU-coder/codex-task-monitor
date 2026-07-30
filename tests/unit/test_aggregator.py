@@ -419,3 +419,87 @@ def test_stable_order_places_tasks_without_start_time_last() -> None:
         "thread-missing-a",
         "thread-missing-z",
     ]
+
+
+def test_manually_completed_state_protects_same_turn() -> None:
+    from codex_task_monitor.monitoring.aggregator import TaskAggregator
+
+    aggregator = TaskAggregator()
+    started_at = datetime(2026, 7, 30, 10, 0, tzinfo=UTC)
+    marked_at = started_at + timedelta(minutes=5)
+    aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.RUNNING,
+            turn_id="turn-1",
+            started_at=started_at,
+            updated_at=started_at,
+        )
+    )
+
+    marked = aggregator.mark_manually_completed(
+        "thread-1",
+        completed_at=marked_at,
+    )
+    running_update = aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.RUNNING,
+            turn_id="turn-1",
+            started_at=started_at,
+            updated_at=marked_at + timedelta(minutes=1),
+        )
+    )
+    terminal_update = aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.COMPLETED,
+            turn_id="turn-1",
+            completed_at=marked_at + timedelta(minutes=2),
+            updated_at=marked_at + timedelta(minutes=2),
+            authoritative=True,
+        )
+    )
+
+    assert marked is not None
+    assert marked.status is TaskStatus.MANUALLY_COMPLETED
+    assert marked.completed_at == marked_at
+    assert running_update.status is TaskStatus.MANUALLY_COMPLETED
+    assert terminal_update.status is TaskStatus.MANUALLY_COMPLETED
+    assert terminal_update.completed_at == marked_at
+
+
+def test_manually_completed_state_is_replaced_by_new_turn() -> None:
+    from codex_task_monitor.monitoring.aggregator import TaskAggregator
+
+    aggregator = TaskAggregator()
+    first_started_at = datetime(2026, 7, 30, 10, 0, tzinfo=UTC)
+    next_started_at = first_started_at + timedelta(minutes=10)
+    aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.RUNNING,
+            turn_id="turn-1",
+            started_at=first_started_at,
+            updated_at=first_started_at,
+        )
+    )
+    aggregator.mark_manually_completed(
+        "thread-1",
+        completed_at=first_started_at + timedelta(minutes=5),
+    )
+
+    resumed = aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.RUNNING,
+            turn_id="turn-2",
+            started_at=next_started_at,
+            updated_at=next_started_at,
+        )
+    )
+
+    assert resumed.status is TaskStatus.RUNNING
+    assert resumed.turn_id == "turn-2"
+    assert resumed.started_at == next_started_at
+    assert resumed.completed_at is None

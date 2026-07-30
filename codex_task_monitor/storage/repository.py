@@ -4,7 +4,13 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 
-from codex_task_monitor.models import TaskSnapshot, TaskStatus, WatchMode, WatchRecord
+from codex_task_monitor.models import (
+    ManualCompletionRecord,
+    TaskSnapshot,
+    TaskStatus,
+    WatchMode,
+    WatchRecord,
+)
 from codex_task_monitor.storage.database import Database
 
 
@@ -97,9 +103,82 @@ class Repository:
             TaskStatus.WAITING_INPUT,
         }
         for watch in self.list_active_watches():
-            if statuses.get(watch.thread_id) not in resumable:
-                self.deactivate_watch(watch.thread_id)
+            status = statuses.get(watch.thread_id)
+            if status in resumable:
+                continue
+            if (
+                status is TaskStatus.MANUALLY_COMPLETED
+                and watch.mode is WatchMode.PERSISTENT
+            ):
+                continue
+            self.deactivate_watch(watch.thread_id)
         return self.list_active_watches()
+
+    def save_manual_completion(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str | None,
+        started_at: datetime | None,
+        marked_at: datetime,
+    ) -> ManualCompletionRecord:
+        """保存或覆盖一个任务当前轮的手动结束记录。"""
+
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO manual_completions (
+                    thread_id, turn_id, started_at, marked_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(thread_id) DO UPDATE SET
+                    turn_id = excluded.turn_id,
+                    started_at = excluded.started_at,
+                    marked_at = excluded.marked_at
+                """,
+                (
+                    thread_id,
+                    turn_id,
+                    started_at.isoformat() if started_at else None,
+                    marked_at.isoformat(),
+                ),
+            )
+        result = self.get_manual_completion(thread_id)
+        if result is None:
+            raise RuntimeError("保存手动结束记录后未能重新读取")
+        return result
+
+    def get_manual_completion(
+        self,
+        thread_id: str,
+    ) -> ManualCompletionRecord | None:
+        """按任务 ID 读取手动结束记录。"""
+
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM manual_completions WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ManualCompletionRecord(
+            thread_id=row["thread_id"],
+            turn_id=row["turn_id"],
+            started_at=(
+                datetime.fromisoformat(row["started_at"])
+                if row["started_at"]
+                else None
+            ),
+            marked_at=datetime.fromisoformat(row["marked_at"]),
+        )
+
+    def delete_manual_completion(self, thread_id: str) -> None:
+        """删除指定任务的手动结束记录。"""
+
+        with self.database.connect() as connection:
+            connection.execute(
+                "DELETE FROM manual_completions WHERE thread_id = ?",
+                (thread_id,),
+            )
 
     def reserve_notification(
         self,

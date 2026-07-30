@@ -5,6 +5,7 @@ export type TaskStatus =
   | "completed"
   | "failed"
   | "interrupted"
+  | "manually_completed"
   | "unknown"
   | "source_error"
 

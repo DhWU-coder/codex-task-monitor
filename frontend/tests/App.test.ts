@@ -15,6 +15,7 @@ const apiMocks = vi.hoisted(() => ({
   getConfig: vi.fn(),
   startWatch: vi.fn(),
   stopWatch: vi.fn(),
+  markManualCompletion: vi.fn(),
   createTaskEventSource: vi.fn(),
 }))
 
@@ -189,6 +190,11 @@ beforeEach(() => {
   apiMocks.getConfig.mockResolvedValue(publicConfig)
   apiMocks.startWatch.mockResolvedValue({ ok: true, mode: "persistent" })
   apiMocks.stopWatch.mockResolvedValue({ ok: true })
+  apiMocks.markManualCompletion.mockResolvedValue({
+    ...baseTask,
+    status: "manually_completed",
+    completed_at: "2026-07-29T09:03:00Z",
+  })
   apiMocks.createTaskEventSource.mockReturnValue(source)
 })
 
@@ -198,6 +204,7 @@ afterEach(() => {
   }
   wrappers = []
   vi.clearAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe("任务监控主页面", () => {
@@ -234,6 +241,60 @@ describe("任务监控主页面", () => {
       "persistent",
     )
     expect(wrapper.text()).toContain("停止监控")
+  })
+
+  it("取消手动结束确认时不调用接口", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => false))
+    const wrapper = await renderApp()
+    const button = wrapper.get("button[data-action='manual-completion']")
+
+    await button.trigger("click")
+    await flushPromises()
+
+    expect(apiMocks.markManualCompletion).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain("实现任务监控器")
+  })
+
+  it("确认手动结束后任务进入最近结束", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true))
+    const wrapper = await renderApp()
+
+    await wrapper
+      .get("button[data-action='manual-completion']")
+      .trigger("click")
+    await flushPromises()
+
+    expect(apiMocks.markManualCompletion).toHaveBeenCalledWith(
+      "thread-running",
+    )
+    expect(wrapper.text()).not.toContain("实现任务监控器")
+
+    await wrapper.get("button[data-filter='recent']").trigger("click")
+
+    expect(wrapper.text()).toContain("实现任务监控器")
+    expect(wrapper.text()).toContain("手动结束")
+  })
+
+  it("手动结束失败时显示错误并恢复按钮", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true))
+    apiMocks.markManualCompletion.mockRejectedValueOnce(
+      new Error("任务当前轮次已经结束"),
+    )
+    const wrapper = await renderApp()
+
+    await wrapper
+      .get("button[data-action='manual-completion']")
+      .trigger("click")
+    await flushPromises()
+
+    expect(wrapper.get("[role='alert']").text()).toContain(
+      "任务当前轮次已经结束",
+    )
+    expect(
+      wrapper.get("button[data-action='manual-completion']").attributes(
+        "disabled",
+      ),
+    ).toBeUndefined()
   })
 
   it("详情展示任务安全摘要", async () => {

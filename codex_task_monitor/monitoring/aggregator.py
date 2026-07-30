@@ -15,6 +15,7 @@ TERMINAL_STATUSES = {
     TaskStatus.COMPLETED,
     TaskStatus.FAILED,
     TaskStatus.INTERRUPTED,
+    TaskStatus.MANUALLY_COMPLETED,
 }
 ACTIVE_STATUSES = {
     TaskStatus.RUNNING,
@@ -115,6 +116,49 @@ class TaskAggregator:
                 "status": TaskStatus.INTERRUPTED,
                 "completed_at": completed_at,
                 "updated_at": max(current.updated_at, completed_at),
+                "waiting_reason": "",
+                "request_id": None,
+            }
+        )
+        self._tasks[thread_id] = updated
+        return updated
+
+    def mark_manually_completed(
+        self,
+        thread_id: str,
+        *,
+        completed_at: datetime,
+    ) -> TaskSnapshot | None:
+        """把当前任务轮次标记为手动结束。"""
+
+        current = self._tasks.get(thread_id)
+        if current is None:
+            return None
+        updated = current.model_copy(
+            update={
+                "status": TaskStatus.MANUALLY_COMPLETED,
+                "completed_at": completed_at,
+                "updated_at": max(current.updated_at, completed_at),
+                "waiting_reason": "",
+                "request_id": None,
+            }
+        )
+        self._tasks[thread_id] = updated
+        return updated
+
+    def clear_manual_completion(
+        self,
+        thread_id: str,
+    ) -> TaskSnapshot | None:
+        """清除旧轮次的手动结束投影，等待新事件重新赋值。"""
+
+        current = self._tasks.get(thread_id)
+        if current is None or current.status is not TaskStatus.MANUALLY_COMPLETED:
+            return current
+        updated = current.model_copy(
+            update={
+                "status": TaskStatus.UNKNOWN,
+                "completed_at": None,
                 "waiting_reason": "",
                 "request_id": None,
             }
@@ -260,12 +304,18 @@ class TaskAggregator:
             and current.turn_id
             and event.turn_id != current.turn_id
         )
+        manually_completed_same_turn = (
+            current.status is TaskStatus.MANUALLY_COMPLETED
+            and not different_turn
+        )
         new_status = current.status
         if event.status and event.status not in {
             TaskStatus.UNKNOWN,
             TaskStatus.SOURCE_ERROR,
         }:
-            if current.status in TERMINAL_STATUSES and not different_turn:
+            if manually_completed_same_turn:
+                pass
+            elif current.status in TERMINAL_STATUSES and not different_turn:
                 if event.status in TERMINAL_STATUSES and event.authoritative:
                     new_status = event.status
             else:
@@ -293,9 +343,13 @@ class TaskAggregator:
                     else current.started_at
                 ),
                 "completed_at": (
-                    event.completed_at
-                    if event.completed_at or different_turn
-                    else current.completed_at
+                    current.completed_at
+                    if manually_completed_same_turn
+                    else (
+                        event.completed_at
+                        if event.completed_at or different_turn
+                        else current.completed_at
+                    )
                 ),
                 "updated_at": max(current.updated_at, event.updated_at),
                 "latest_summary": (

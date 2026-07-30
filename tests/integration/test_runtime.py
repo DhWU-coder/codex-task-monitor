@@ -901,3 +901,237 @@ async def test_three_running_named_tasks_use_app_server_titles(
         "thread-feishu": "飞书channel-Web Chat",
         "thread-frontend": "生成前端",
     }
+
+
+def _manual_completion_running_event(
+    *,
+    turn_id: str | None = "turn-manual",
+    started_at: datetime | None = None,
+    status: TaskStatus = TaskStatus.RUNNING,
+    updated_at: datetime | None = None,
+    authoritative: bool = False,
+) -> SourceEvent:
+    """构造手动结束运行时测试使用的事件。"""
+
+    effective_started_at = started_at or datetime.now(UTC) - timedelta(minutes=5)
+    return SourceEvent(
+        source=SourceKind.SESSION,
+        thread_id="thread-manual",
+        turn_id=turn_id,
+        title="需要手动结束的任务",
+        status=status,
+        started_at=effective_started_at,
+        completed_at=updated_at if status is TaskStatus.COMPLETED else None,
+        updated_at=updated_at or effective_started_at,
+        authoritative=authoritative,
+    )
+
+
+@pytest.mark.asyncio
+async def test_manual_completion_persists_without_notification_and_stops_current_watch(
+    tmp_path: Path,
+) -> None:
+    running = _manual_completion_running_event()
+    runtime, notifier, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running]]),
+    )
+    await runtime.observe_once()
+    await runtime.start_watch("thread-manual", WatchMode.CURRENT_TURN)
+
+    task = await runtime.mark_manual_completion("thread-manual")
+
+    assert task.status is TaskStatus.MANUALLY_COMPLETED
+    assert task.completed_at is not None
+    assert runtime.repository.get_manual_completion("thread-manual") is not None
+    assert runtime.repository.list_snapshots()[0].status is TaskStatus.MANUALLY_COMPLETED
+    watch = runtime.repository.get_watch("thread-manual")
+    assert watch is not None
+    assert watch.active is False
+    assert notifier.messages == []
+    assert runtime.repository.get_notification_by_key(
+        "thread-manual:turn-manual:manually_completed"
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_manual_completion_keeps_persistent_watch_active(
+    tmp_path: Path,
+) -> None:
+    running = _manual_completion_running_event()
+    runtime, _, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running]]),
+    )
+    await runtime.observe_once()
+    await runtime.start_watch("thread-manual", WatchMode.PERSISTENT)
+
+    task = await runtime.mark_manual_completion("thread-manual")
+
+    watch = runtime.repository.get_watch("thread-manual")
+    assert task.status is TaskStatus.MANUALLY_COMPLETED
+    assert task.monitored is True
+    assert watch is not None
+    assert watch.active is True
+    assert watch.mode is WatchMode.PERSISTENT
+
+
+@pytest.mark.asyncio
+async def test_manual_completion_suppresses_same_turn_updates_and_notifications(
+    tmp_path: Path,
+) -> None:
+    started_at = datetime.now(UTC) - timedelta(minutes=5)
+    running = _manual_completion_running_event(started_at=started_at)
+    later = datetime.now(UTC) + timedelta(minutes=1)
+    same_turn_running = _manual_completion_running_event(
+        started_at=started_at,
+        updated_at=later,
+    )
+    same_turn_waiting = _manual_completion_running_event(
+        started_at=started_at,
+        status=TaskStatus.WAITING_INPUT,
+        updated_at=later + timedelta(minutes=1),
+    )
+    same_turn_completed = _manual_completion_running_event(
+        started_at=started_at,
+        status=TaskStatus.COMPLETED,
+        updated_at=later + timedelta(minutes=2),
+        authoritative=True,
+    )
+    runtime, notifier, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver(
+            [
+                [running],
+                [same_turn_running],
+                [same_turn_waiting],
+                [same_turn_completed],
+            ]
+        ),
+    )
+    await runtime.observe_once()
+    await runtime.start_watch("thread-manual", WatchMode.PERSISTENT)
+    marked = await runtime.mark_manual_completion("thread-manual")
+
+    await runtime.observe_once()
+    assert runtime.get_task("thread-manual").status is TaskStatus.MANUALLY_COMPLETED
+    await runtime.observe_once()
+    assert runtime.get_task("thread-manual").status is TaskStatus.MANUALLY_COMPLETED
+    await runtime.observe_once()
+    task = runtime.get_task("thread-manual")
+
+    assert task is not None
+    assert task.status is TaskStatus.MANUALLY_COMPLETED
+    assert task.completed_at == marked.completed_at
+    assert notifier.messages == []
+
+
+@pytest.mark.asyncio
+async def test_manual_completion_is_cleared_by_new_turn(
+    tmp_path: Path,
+) -> None:
+    first_started_at = datetime.now(UTC) - timedelta(minutes=5)
+    first = _manual_completion_running_event(started_at=first_started_at)
+    second_started_at = datetime.now(UTC) + timedelta(minutes=1)
+    second = _manual_completion_running_event(
+        turn_id="turn-next",
+        started_at=second_started_at,
+        updated_at=second_started_at,
+    )
+    runtime, _, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[first], [second]]),
+    )
+    await runtime.observe_once()
+    await runtime.start_watch("thread-manual", WatchMode.PERSISTENT)
+    await runtime.mark_manual_completion("thread-manual")
+
+    await runtime.observe_once()
+    task = runtime.get_task("thread-manual")
+
+    assert task is not None
+    assert task.status is TaskStatus.RUNNING
+    assert task.turn_id == "turn-next"
+    assert task.started_at == second_started_at
+    assert task.completed_at is None
+    assert runtime.repository.get_manual_completion("thread-manual") is None
+    watch = runtime.repository.get_watch("thread-manual")
+    assert watch is not None
+    assert watch.active is True
+
+
+@pytest.mark.asyncio
+async def test_manual_completion_without_turn_uses_later_start_time(
+    tmp_path: Path,
+) -> None:
+    first_started_at = datetime.now(UTC) - timedelta(minutes=5)
+    first = _manual_completion_running_event(
+        turn_id=None,
+        started_at=first_started_at,
+    )
+    runtime, _, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[first]]),
+    )
+    await runtime.observe_once()
+    marked = await runtime.mark_manual_completion("thread-manual")
+    assert marked.completed_at is not None
+
+    same_generation = _manual_completion_running_event(
+        turn_id=None,
+        started_at=first_started_at,
+        updated_at=marked.completed_at + timedelta(seconds=1),
+    )
+    runtime.observer.batches.append([same_generation])
+    await runtime.observe_once()
+    assert runtime.get_task("thread-manual").status is TaskStatus.MANUALLY_COMPLETED
+
+    next_started_at = marked.completed_at + timedelta(seconds=2)
+    next_generation = _manual_completion_running_event(
+        turn_id=None,
+        started_at=next_started_at,
+        updated_at=next_started_at,
+    )
+    runtime.observer.batches.append([next_generation])
+    await runtime.observe_once()
+    task = runtime.get_task("thread-manual")
+
+    assert task is not None
+    assert task.status is TaskStatus.RUNNING
+    assert task.started_at == next_started_at
+    assert runtime.repository.get_manual_completion("thread-manual") is None
+
+
+@pytest.mark.asyncio
+async def test_manual_completion_and_persistent_watch_survive_runtime_restart(
+    tmp_path: Path,
+) -> None:
+    running = _manual_completion_running_event(
+        turn_id="turn-1",
+        started_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+    first_runtime, _, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running]]),
+    )
+    await first_runtime.observe_once()
+    await first_runtime.start_watch("thread-manual", WatchMode.PERSISTENT)
+    await first_runtime.mark_manual_completion("thread-manual")
+
+    second_runtime, _, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running]]),
+        app_client=StaticThreadListAppClient([]),
+    )
+    await second_runtime.start()
+    try:
+        task = second_runtime.get_task("thread-manual")
+        watch = second_runtime.repository.get_watch("thread-manual")
+
+        assert task is not None
+        assert task.status is TaskStatus.MANUALLY_COMPLETED
+        assert watch is not None
+        assert watch.active is True
+        assert watch.mode is WatchMode.PERSISTENT
+    finally:
+        await second_runtime.stop()

@@ -73,6 +73,38 @@ describe("API 客户端", () => {
     )
   })
 
+  it("手动结束请求携带 CSRF 且不发送空请求体", async () => {
+    document.cookie = "codex_monitor_csrf=csrf-test; Path=/"
+    const manuallyCompleted = {
+      ...task,
+      status: "manually_completed" as const,
+      completed_at: "2026-07-29T09:02:00Z",
+    }
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(manuallyCompleted), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+    const { markManualCompletion } = await import("../src/api")
+
+    const result = await markManualCompletion("thread-1")
+
+    expect(result).toEqual(manuallyCompleted)
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tasks/thread-1/manual-completion",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "X-CSRF-Token": "csrf-test",
+        },
+      }),
+    )
+    const options = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(options.body).toBeUndefined()
+  })
+
   it("把后端错误转换成可展示消息", async () => {
     vi.stubGlobal(
       "fetch",

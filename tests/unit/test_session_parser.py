@@ -147,6 +147,85 @@ def test_replayed_ancestor_user_message_does_not_set_canonical_title() -> None:
     assert events[0].title == "子任务标题"
 
 
+def test_task_started_immediately_before_canonical_metadata_is_recovered() -> None:
+    parser = _parser()
+    canonical_meta = {
+        "timestamp": "2026-07-30T06:43:56Z",
+        "type": "session_meta",
+        "payload": {
+            "id": "thread-child",
+            "forked_from_id": "thread-parent",
+            "cwd": "/work/child",
+        },
+    }
+    parser.parse(canonical_meta)
+    parser.parse(
+        {
+            "type": "session_meta",
+            "payload": {"id": "thread-parent"},
+        }
+    )
+    parser.parse(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "turn_id": "turn-parent",
+            },
+        }
+    )
+    skipped = parser.parse(
+        {
+            "timestamp": "2026-07-30T06:44:18Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "task_started",
+                "turn_id": "turn-child",
+                "started_at": "2026-07-30T06:44:18Z",
+            },
+        }
+    )
+
+    resumed = parser.parse(canonical_meta)
+
+    assert skipped == []
+    assert [event.status for event in resumed] == [
+        TaskStatus.UNKNOWN,
+        TaskStatus.RUNNING,
+    ]
+    assert resumed[-1].thread_id == "thread-child"
+    assert resumed[-1].turn_id == "turn-child"
+
+
+def test_boundary_terminal_event_is_not_replayed_for_canonical_task() -> None:
+    parser = _parser()
+    canonical_meta = {
+        "type": "session_meta",
+        "payload": {"id": "thread-child"},
+    }
+    parser.parse(canonical_meta)
+    parser.parse(
+        {
+            "type": "session_meta",
+            "payload": {"id": "thread-parent"},
+        }
+    )
+    parser.parse(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "task_complete",
+                "turn_id": "turn-parent",
+            },
+        }
+    )
+
+    resumed = parser.parse(canonical_meta)
+
+    assert [event.status for event in resumed] == [TaskStatus.UNKNOWN]
+    assert resumed[0].turn_id is None
+
+
 def test_task_started_maps_running_event() -> None:
     parser = _parser()
     parser.parse(
