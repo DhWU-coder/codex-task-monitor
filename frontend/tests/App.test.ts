@@ -293,6 +293,234 @@ describe("任务监控主页面", () => {
     expect(wrapper.text()).toContain("停止监控")
   })
 
+  it("当前筛选操作默认显示并在选择模式隐藏", async () => {
+    const wrapper = await renderApp()
+
+    expect(
+      wrapper.find("[aria-label='当前筛选批量监控']").exists(),
+    ).toBe(true)
+
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+
+    expect(
+      wrapper.find("[aria-label='当前筛选批量监控']").exists(),
+    ).toBe(false)
+  })
+
+  it("当前筛选没有活动任务时禁用批量监控", async () => {
+    const wrapper = await renderApp()
+
+    await wrapper.get("button[data-filter='recent']").trigger("click")
+
+    const currentTurnButton = wrapper.get(
+      "[data-current-filter-watch='current_turn']",
+    )
+    const persistentButton = wrapper.get(
+      "[data-current-filter-watch='persistent']",
+    )
+    expect(currentTurnButton.attributes("disabled")).toBeDefined()
+    expect(persistentButton.attributes("disabled")).toBeDefined()
+
+    await currentTurnButton.trigger("click")
+    await persistentButton.trigger("click")
+
+    expect(apiMocks.startWatch).not.toHaveBeenCalled()
+  })
+
+  it("当前筛选批量当前轮监控不重复请求且不降级持续监控", async () => {
+    apiMocks.getTasks.mockResolvedValueOnce([
+      {
+        ...baseTask,
+        thread_id: "thread-unwatched",
+        title: "未监控任务",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-current",
+        title: "当前轮任务",
+        monitored: true,
+        watch_mode: "current_turn",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-persistent",
+        title: "持续任务",
+        monitored: true,
+        watch_mode: "persistent",
+      },
+    ])
+    const wrapper = await renderApp()
+
+    await wrapper
+      .get("[data-current-filter-watch='current_turn']")
+      .trigger("click")
+    await flushPromises()
+
+    expect(apiMocks.startWatch).toHaveBeenCalledTimes(1)
+    expect(apiMocks.startWatch).toHaveBeenCalledWith(
+      "thread-unwatched",
+      "current_turn",
+    )
+    expect(apiMocks.startWatch).not.toHaveBeenCalledWith(
+      "thread-persistent",
+      "current_turn",
+    )
+    expect(wrapper.text()).toContain("当前轮监控中")
+    expect(wrapper.text()).toContain("持续监控中")
+  })
+
+  it("当前筛选为全部时只持续监控活动任务", async () => {
+    const wrapper = await renderApp()
+
+    await wrapper.get("button[data-filter='all']").trigger("click")
+    await wrapper
+      .get("[data-current-filter-watch='persistent']")
+      .trigger("click")
+    await flushPromises()
+
+    expect(apiMocks.startWatch).toHaveBeenCalledTimes(2)
+    expect(apiMocks.startWatch).toHaveBeenCalledWith(
+      "thread-running",
+      "persistent",
+    )
+    expect(apiMocks.startWatch).toHaveBeenCalledWith(
+      "thread-waiting",
+      "persistent",
+    )
+    expect(apiMocks.startWatch).not.toHaveBeenCalledWith(
+      "thread-completed",
+      "persistent",
+    )
+  })
+
+  it("当前筛选持续监控升级未监控和当前轮任务", async () => {
+    apiMocks.getTasks.mockResolvedValueOnce([
+      {
+        ...baseTask,
+        thread_id: "thread-unwatched",
+        title: "未监控任务",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-current",
+        title: "当前轮任务",
+        monitored: true,
+        watch_mode: "current_turn",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-persistent",
+        title: "持续任务",
+        monitored: true,
+        watch_mode: "persistent",
+      },
+    ])
+    const wrapper = await renderApp()
+
+    await wrapper
+      .get("[data-current-filter-watch='persistent']")
+      .trigger("click")
+    await flushPromises()
+
+    expect(apiMocks.startWatch).toHaveBeenCalledTimes(2)
+    expect(apiMocks.startWatch).toHaveBeenCalledWith(
+      "thread-unwatched",
+      "persistent",
+    )
+    expect(apiMocks.startWatch).toHaveBeenCalledWith(
+      "thread-current",
+      "persistent",
+    )
+    expect(apiMocks.startWatch).not.toHaveBeenCalledWith(
+      "thread-persistent",
+      "persistent",
+    )
+    for (const badge of wrapper.findAll(".watch-badge")) {
+      expect(badge.text()).toBe("持续监控中")
+    }
+  })
+
+  it("当前筛选批量监控部分失败时保留成功结果并提示", async () => {
+    apiMocks.getTasks.mockResolvedValueOnce([
+      {
+        ...baseTask,
+        thread_id: "thread-success",
+        title: "成功任务",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-failed",
+        title: "失败任务",
+      },
+    ])
+    apiMocks.startWatch.mockImplementation((threadId: string) => {
+      if (threadId === "thread-failed") {
+        return Promise.reject(new Error("飞书监控启动失败"))
+      }
+      return Promise.resolve({ ok: true, mode: "current_turn" })
+    })
+    const wrapper = await renderApp()
+
+    await wrapper
+      .get("[data-current-filter-watch='current_turn']")
+      .trigger("click")
+    await flushPromises()
+
+    expect(wrapper.findAll(".watch-badge")).toHaveLength(1)
+    expect(wrapper.get("[role='alert']").text()).toContain(
+      "1 个任务启动监控失败",
+    )
+  })
+
+  it("当前筛选批量请求期间禁用监控和选择按钮", async () => {
+    let resolveWatch: (() => void) | undefined
+    apiMocks.startWatch.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveWatch = () => resolve({
+            ok: true,
+            mode: "current_turn",
+          })
+        }),
+    )
+    const wrapper = await renderApp()
+
+    await wrapper
+      .get("[data-current-filter-watch='current_turn']")
+      .trigger("click")
+    await wrapper.vm.$nextTick()
+
+    expect(
+      wrapper
+        .get("[data-current-filter-watch='current_turn']")
+        .attributes("disabled"),
+    ).toBeDefined()
+    expect(
+      wrapper
+        .get("[data-current-filter-watch='persistent']")
+        .attributes("disabled"),
+    ).toBeDefined()
+    expect(
+      wrapper
+        .get("[data-action='enter-selection']")
+        .attributes("disabled"),
+    ).toBeDefined()
+
+    resolveWatch?.()
+    await flushPromises()
+
+    expect(
+      wrapper
+        .get("[data-current-filter-watch='current_turn']")
+        .attributes("disabled"),
+    ).toBeUndefined()
+    expect(
+      wrapper
+        .get("[data-action='enter-selection']")
+        .attributes("disabled"),
+    ).toBeUndefined()
+  })
+
   it("选择模式只为活动任务显示复选框", async () => {
     const wrapper = await renderApp()
 

@@ -18,6 +18,7 @@ import {
 } from "./api"
 import BulkWatchBar from "./components/BulkWatchBar.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
+import CurrentFilterWatchActions from "./components/CurrentFilterWatchActions.vue"
 import FilterTabs, {
   type TaskFilter,
 } from "./components/FilterTabs.vue"
@@ -109,6 +110,10 @@ const visibleTasks = computed(() => {
   return tasks.value
 })
 
+const visibleActiveTasks = computed(() =>
+  visibleTasks.value.filter((task) => activeStatuses.has(task.status)),
+)
+
 function enterSelectionMode(): void {
   taskContextMenu.value = null
   selectionMode.value = true
@@ -191,28 +196,29 @@ function targetWatchMode(
   return requestedMode
 }
 
-async function bulkWatchTasks(requestedMode: WatchMode): Promise<void> {
-  if (bulkWatching.value) {
-    return
-  }
-  const selectedTasks = tasks.value.filter(
+async function executeWatchGroup(
+  taskRows: TaskSnapshot[],
+  requestedMode: WatchMode,
+): Promise<{
+  succeededIds: Set<string>
+  failureMessages: string[]
+}> {
+  const requestedIds = new Set(
+    taskRows.map((task) => task.thread_id),
+  )
+  const activeTasks = tasks.value.filter(
     (task) =>
-      selectedTaskIds.value.has(task.thread_id)
+      requestedIds.has(task.thread_id)
       && activeStatuses.has(task.status),
   )
-  if (!selectedTasks.length) {
-    return
-  }
 
-  bulkWatching.value = true
-  errorMessage.value = ""
-  for (const task of selectedTasks) {
+  for (const task of activeTasks) {
     setBusy(task.thread_id, true)
   }
 
   try {
     const results = await Promise.allSettled(
-      selectedTasks.map(async (task) => {
+      activeTasks.map(async (task) => {
         const mode = targetWatchMode(task, requestedMode)
         if (task.monitored && task.watch_mode === mode) {
           return { threadId: task.thread_id, mode }
@@ -225,7 +231,7 @@ async function bulkWatchTasks(requestedMode: WatchMode): Promise<void> {
     const succeededIds = new Set<string>()
     const failureMessages: string[] = []
     for (const [index, result] of results.entries()) {
-      const task = selectedTasks[index]
+      const task = activeTasks[index]
       if (result.status === "fulfilled") {
         succeededIds.add(task.thread_id)
         replaceTask(task.thread_id, {
@@ -241,6 +247,34 @@ async function bulkWatchTasks(requestedMode: WatchMode): Promise<void> {
       }
     }
 
+    return { succeededIds, failureMessages }
+  } finally {
+    for (const task of activeTasks) {
+      setBusy(task.thread_id, false)
+    }
+  }
+}
+
+async function bulkWatchTasks(requestedMode: WatchMode): Promise<void> {
+  if (bulkWatching.value) {
+    return
+  }
+  const selectedTasks = tasks.value.filter(
+    (task) =>
+      selectedTaskIds.value.has(task.thread_id)
+      && activeStatuses.has(task.status),
+  )
+  if (!selectedTasks.length) {
+    return
+  }
+
+  bulkWatching.value = true
+  errorMessage.value = ""
+
+  try {
+    const { succeededIds, failureMessages } =
+      await executeWatchGroup(selectedTasks, requestedMode)
+
     selectedTaskIds.value = new Set(
       [...selectedTaskIds.value].filter(
         (threadId) => !succeededIds.has(threadId),
@@ -254,9 +288,35 @@ async function bulkWatchTasks(requestedMode: WatchMode): Promise<void> {
       exitSelectionMode()
     }
   } finally {
-    for (const task of selectedTasks) {
-      setBusy(task.thread_id, false)
+    bulkWatching.value = false
+  }
+}
+
+async function watchVisibleTasks(
+  requestedMode: WatchMode,
+): Promise<void> {
+  if (bulkWatching.value || loading.value) {
+    return
+  }
+  const taskRows = [...visibleActiveTasks.value]
+  if (!taskRows.length) {
+    return
+  }
+
+  bulkWatching.value = true
+  errorMessage.value = ""
+
+  try {
+    const { failureMessages } = await executeWatchGroup(
+      taskRows,
+      requestedMode,
+    )
+    if (failureMessages.length) {
+      errorMessage.value =
+        `${failureMessages.length} 个任务启动监控失败：`
+        + failureMessages[0]
     }
+  } finally {
     bulkWatching.value = false
   }
 }
@@ -527,6 +587,12 @@ onUnmounted(() => {
           <h2>本机任务</h2>
         </div>
         <div class="task-toolbar-controls">
+          <CurrentFilterWatchActions
+            v-if="!selectionMode"
+            :active-count="visibleActiveTasks.length"
+            :busy="bulkWatching || loading"
+            @watch="watchVisibleTasks"
+          />
           <FilterTabs
             :active="activeFilter"
             :counts="counts"
@@ -537,6 +603,7 @@ onUnmounted(() => {
             type="button"
             class="button button-secondary"
             data-action="enter-selection"
+            :disabled="bulkWatching"
             @click="enterSelectionMode"
           >
             选择

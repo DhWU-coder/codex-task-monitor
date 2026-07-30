@@ -301,6 +301,24 @@ select:focus-visible {
   gap: 10px;
 }
 
+.current-filter-watch-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-filter);
+}
+
+.current-filter-watch-label {
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .filter-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -1126,6 +1144,10 @@ select:focus-visible {
     justify-content: flex-start;
   }
 
+  .current-filter-watch-actions {
+    flex-wrap: wrap;
+  }
+
   .bulk-watch-bar {
     align-items: flex-start;
     flex-direction: column;
@@ -1170,6 +1192,19 @@ select:focus-visible {
 
   .filter-tabs {
     width: 100%;
+  }
+
+  .current-filter-watch-actions {
+    width: 100%;
+  }
+
+  .current-filter-watch-label {
+    width: 100%;
+    padding: 3px 8px;
+  }
+
+  .current-filter-watch-actions .button {
+    flex: 1 1 0;
   }
 
   .task-toolbar-controls > .button {
