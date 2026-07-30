@@ -139,16 +139,33 @@ describe("设置面板", () => {
     })
   })
 
-  it("确认后发送测试消息并展示结果", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true)
+  it("使用自定义确认弹窗发送测试消息", async () => {
     const wrapper = mount(SettingsPanel, {
       props: { initialConfig: config },
+      global: {
+        stubs: { teleport: true },
+      },
     })
 
     await wrapper.get("button[data-action='test-notification']").trigger("click")
+
+    expect(wrapper.get("[role='alertdialog']").text()).toContain(
+      "发送测试消息",
+    )
+    expect(apiMocks.sendTestNotification).not.toHaveBeenCalled()
+
+    await wrapper
+      .get("button[data-action='confirm-dialog-cancel']")
+      .trigger("click")
+    expect(wrapper.find("[role='alertdialog']").exists()).toBe(false)
+    expect(apiMocks.sendTestNotification).not.toHaveBeenCalled()
+
+    await wrapper.get("button[data-action='test-notification']").trigger("click")
+    await wrapper
+      .get("button[data-action='confirm-dialog-confirm']")
+      .trigger("click")
     await flushPromises()
 
-    expect(window.confirm).toHaveBeenCalled()
     expect(apiMocks.sendTestNotification).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain("测试消息已发送")
   })

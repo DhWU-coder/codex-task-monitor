@@ -216,6 +216,30 @@ describe("任务监控主页面", () => {
     expect(wrapper.get('[aria-current="page"]').text()).toContain("运行中")
   })
 
+  it("任务使用单列横向列表结构", async () => {
+    apiMocks.getTasks.mockResolvedValueOnce([
+      baseTask,
+      {
+        ...baseTask,
+        thread_id: "thread-running-2",
+        title: "第二个运行任务",
+      },
+    ])
+    const wrapper = await renderApp()
+
+    const taskList = wrapper.get("[data-task-list]")
+    const rows = taskList.findAll(".task-card")
+
+    expect(taskList.classes()).toContain("task-list")
+    expect(wrapper.find(".task-grid").exists()).toBe(false)
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.find("[data-task-identity]").exists()).toBe(true)
+      expect(row.find("[data-task-meta]").exists()).toBe(true)
+      expect(row.find("[data-task-actions]").exists()).toBe(true)
+    }
+  })
+
   it("需处理筛选只显示等待任务", async () => {
     const wrapper = await renderApp()
 
@@ -243,30 +267,301 @@ describe("任务监控主页面", () => {
     expect(wrapper.text()).toContain("停止监控")
   })
 
+  it("选择模式只为活动任务显示复选框", async () => {
+    const wrapper = await renderApp()
+
+    expect(wrapper.get("[data-action='enter-selection']").text()).toBe("选择")
+    expect(wrapper.find("[data-task-selection]").exists()).toBe(false)
+    expect(wrapper.find(".bulk-watch-bar").exists()).toBe(false)
+
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+
+    expect(wrapper.find(".bulk-watch-bar").exists()).toBe(true)
+    expect(
+      wrapper.find("[data-task-selection='thread-running']").exists(),
+    ).toBe(true)
+
+    await wrapper.get("button[data-filter='all']").trigger("click")
+
+    expect(
+      wrapper.find("[data-task-selection='thread-waiting']").exists(),
+    ).toBe(true)
+    expect(
+      wrapper.find("[data-task-selection='thread-completed']").exists(),
+    ).toBe(false)
+  })
+
+  it("选择在筛选间保留并支持全选、清空和退出", async () => {
+    const wrapper = await renderApp()
+
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+    await wrapper
+      .get("[data-task-selection='thread-running']")
+      .setValue(true)
+
+    expect(wrapper.get(".bulk-watch-summary").text()).toContain(
+      "已选择 1 项",
+    )
+
+    await wrapper.get("button[data-filter='attention']").trigger("click")
+    await wrapper.get("[data-action='select-all']").trigger("click")
+
+    expect(wrapper.get(".bulk-watch-summary").text()).toContain(
+      "已选择 2 项",
+    )
+
+    await wrapper.get("button[data-filter='running']").trigger("click")
+    expect(
+      (
+        wrapper.get(
+          "[data-task-selection='thread-running']",
+        ).element as HTMLInputElement
+      ).checked,
+    ).toBe(true)
+
+    await wrapper.get("[data-action='clear-selection']").trigger("click")
+    expect(wrapper.get(".bulk-watch-summary").text()).toContain(
+      "已选择 0 项",
+    )
+    expect(wrapper.find(".bulk-watch-bar").exists()).toBe(true)
+
+    await wrapper.get("[data-action='exit-selection']").trigger("click")
+    expect(wrapper.find(".bulk-watch-bar").exists()).toBe(false)
+    expect(wrapper.find("[data-task-selection]").exists()).toBe(false)
+  })
+
+  it("全选只选择当前筛选中的活动任务", async () => {
+    const wrapper = await renderApp()
+
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+    await wrapper.get("button[data-filter='all']").trigger("click")
+    await wrapper.get("[data-action='select-all']").trigger("click")
+
+    expect(wrapper.get(".bulk-watch-summary").text()).toContain(
+      "已选择 2 项",
+    )
+    expect(
+      wrapper.find("[data-task-selection='thread-completed']").exists(),
+    ).toBe(false)
+
+    await wrapper.get("[data-action='clear-selection']").trigger("click")
+    await wrapper.get("button[data-filter='running']").trigger("click")
+    await wrapper.get("[data-action='select-all']").trigger("click")
+
+    expect(wrapper.get(".bulk-watch-summary").text()).toContain(
+      "已选择 1 项",
+    )
+  })
+
+  it("SSE 终态更新会清理选择但保留选择模式", async () => {
+    const wrapper = await renderApp()
+
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+    await wrapper
+      .get("[data-task-selection='thread-running']")
+      .setValue(true)
+
+    source.emit("tasks", {
+      tasks: [
+        {
+          ...baseTask,
+          status: "completed",
+          completed_at: "2026-07-29T09:04:00Z",
+        },
+      ],
+    })
+    await flushPromises()
+
+    expect(wrapper.get(".bulk-watch-summary").text()).toContain(
+      "已选择 0 项",
+    )
+    expect(wrapper.find(".bulk-watch-bar").exists()).toBe(true)
+  })
+
+  it("批量当前轮监控不会降级已有持续监控", async () => {
+    apiMocks.getTasks.mockResolvedValueOnce([
+      {
+        ...baseTask,
+        thread_id: "thread-unwatched",
+        title: "未监控任务",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-current",
+        title: "当前轮任务",
+        monitored: true,
+        watch_mode: "current_turn",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-persistent",
+        title: "持续任务",
+        monitored: true,
+        watch_mode: "persistent",
+      },
+    ])
+    const wrapper = await renderApp()
+
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+    await wrapper.get("[data-action='select-all']").trigger("click")
+    await wrapper.get("[data-watch='current_turn']").trigger("click")
+    await flushPromises()
+
+    expect(apiMocks.startWatch).toHaveBeenCalledTimes(1)
+    expect(apiMocks.startWatch).toHaveBeenCalledWith(
+      "thread-unwatched",
+      "current_turn",
+    )
+    expect(apiMocks.startWatch).not.toHaveBeenCalledWith(
+      "thread-persistent",
+      "current_turn",
+    )
+    expect(wrapper.find(".bulk-watch-bar").exists()).toBe(false)
+    expect(wrapper.text()).toContain("当前轮监控中")
+    expect(wrapper.text()).toContain("持续监控中")
+  })
+
+  it("批量持续监控会升级未监控和当前轮任务", async () => {
+    apiMocks.getTasks.mockResolvedValueOnce([
+      {
+        ...baseTask,
+        thread_id: "thread-unwatched",
+        title: "未监控任务",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-current",
+        title: "当前轮任务",
+        monitored: true,
+        watch_mode: "current_turn",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-persistent",
+        title: "持续任务",
+        monitored: true,
+        watch_mode: "persistent",
+      },
+    ])
+    const wrapper = await renderApp()
+
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+    await wrapper.get("[data-action='select-all']").trigger("click")
+    await wrapper.get("[data-watch='persistent']").trigger("click")
+    await flushPromises()
+
+    expect(apiMocks.startWatch).toHaveBeenCalledTimes(2)
+    expect(apiMocks.startWatch).toHaveBeenCalledWith(
+      "thread-unwatched",
+      "persistent",
+    )
+    expect(apiMocks.startWatch).toHaveBeenCalledWith(
+      "thread-current",
+      "persistent",
+    )
+    expect(apiMocks.startWatch).not.toHaveBeenCalledWith(
+      "thread-persistent",
+      "persistent",
+    )
+    expect(wrapper.find(".bulk-watch-bar").exists()).toBe(false)
+    expect(wrapper.findAll(".watch-badge")).toHaveLength(3)
+    for (const badge of wrapper.findAll(".watch-badge")) {
+      expect(badge.text()).toBe("持续监控中")
+    }
+  })
+
+  it("批量监控部分失败时只保留失败任务的选择", async () => {
+    apiMocks.getTasks.mockResolvedValueOnce([
+      {
+        ...baseTask,
+        thread_id: "thread-success",
+        title: "成功任务",
+      },
+      {
+        ...baseTask,
+        thread_id: "thread-failed",
+        title: "失败任务",
+      },
+    ])
+    apiMocks.startWatch.mockImplementation((threadId: string) => {
+      if (threadId === "thread-failed") {
+        return Promise.reject(new Error("飞书监控启动失败"))
+      }
+      return Promise.resolve({ ok: true, mode: "current_turn" })
+    })
+    const wrapper = await renderApp()
+
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+    await wrapper.get("[data-action='select-all']").trigger("click")
+    await wrapper.get("[data-watch='current_turn']").trigger("click")
+    await flushPromises()
+
+    expect(wrapper.find(".bulk-watch-bar").exists()).toBe(true)
+    expect(wrapper.get(".bulk-watch-summary").text()).toContain(
+      "已选择 1 项",
+    )
+    expect(
+      (
+        wrapper.get(
+          "[data-task-selection='thread-success']",
+        ).element as HTMLInputElement
+      ).checked,
+    ).toBe(false)
+    expect(
+      (
+        wrapper.get(
+          "[data-task-selection='thread-failed']",
+        ).element as HTMLInputElement
+      ).checked,
+    ).toBe(true)
+    expect(wrapper.get("[role='alert']").text()).toContain(
+      "1 个任务启动监控失败",
+    )
+  })
+
   it("取消手动结束确认时不调用接口", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => false))
     const wrapper = await renderApp()
     const button = wrapper.get("button[data-action='manual-completion']")
 
     await button.trigger("click")
-    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    const dialog = document.querySelector("[role='alertdialog']")
+    const confirmButton = document.querySelector(
+      "[data-action='confirm-dialog-confirm']",
+    )
+    const cancelButton = document.querySelector(
+      "[data-action='confirm-dialog-cancel']",
+    ) as HTMLButtonElement
+
+    expect(dialog?.textContent).toContain("标记本轮已结束")
+    expect(confirmButton?.classList.contains("button-danger")).toBe(true)
+
+    cancelButton.click()
+    await wrapper.vm.$nextTick()
 
     expect(apiMocks.markManualCompletion).not.toHaveBeenCalled()
+    expect(document.querySelector("[role='alertdialog']")).toBeNull()
     expect(wrapper.text()).toContain("实现任务监控器")
   })
 
   it("确认手动结束后任务进入最近结束", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true))
     const wrapper = await renderApp()
 
     await wrapper
       .get("button[data-action='manual-completion']")
       .trigger("click")
+    await wrapper.vm.$nextTick()
+    const confirmButton = document.querySelector(
+      "[data-action='confirm-dialog-confirm']",
+    ) as HTMLButtonElement
+    confirmButton.click()
     await flushPromises()
 
     expect(apiMocks.markManualCompletion).toHaveBeenCalledWith(
       "thread-running",
     )
+    expect(document.querySelector("[role='alertdialog']")).toBeNull()
     expect(wrapper.text()).not.toContain("实现任务监控器")
 
     await wrapper.get("button[data-filter='recent']").trigger("click")
@@ -276,7 +571,6 @@ describe("任务监控主页面", () => {
   })
 
   it("手动结束失败时显示错误并恢复按钮", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true))
     apiMocks.markManualCompletion.mockRejectedValueOnce(
       new Error("任务当前轮次已经结束"),
     )
@@ -285,6 +579,11 @@ describe("任务监控主页面", () => {
     await wrapper
       .get("button[data-action='manual-completion']")
       .trigger("click")
+    await wrapper.vm.$nextTick()
+    const confirmButton = document.querySelector(
+      "[data-action='confirm-dialog-confirm']",
+    ) as HTMLButtonElement
+    confirmButton.click()
     await flushPromises()
 
     expect(wrapper.get("[role='alert']").text()).toContain(

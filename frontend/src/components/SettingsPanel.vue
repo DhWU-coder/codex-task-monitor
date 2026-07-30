@@ -3,6 +3,7 @@ import { computed, reactive, ref } from "vue"
 
 import { sendTestNotification, updateConfig } from "../api"
 import type { PublicConfig } from "../types"
+import ConfirmDialog from "./ConfirmDialog.vue"
 
 const props = defineProps<{
   initialConfig: PublicConfig
@@ -58,6 +59,7 @@ const recipientField = computed(
 const clearSecret = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const testConfirmationOpen = ref(false)
 const errorMessage = ref("")
 const successMessage = ref("")
 const restartRequired = ref(false)
@@ -111,10 +113,8 @@ async function save(): Promise<void> {
   }
 }
 
-async function testNotification(): Promise<void> {
-  if (!window.confirm("确认使用当前已保存配置发送一条飞书测试消息？")) {
-    return
-  }
+async function sendTestMessage(): Promise<void> {
+  testConfirmationOpen.value = false
   testing.value = true
   errorMessage.value = ""
   successMessage.value = ""
@@ -356,7 +356,7 @@ async function testNotification(): Promise<void> {
             class="button button-secondary"
             :disabled="testing"
             data-action="test-notification"
-            @click="testNotification"
+            @click="testConfirmationOpen = true"
           >
             {{ testing ? "发送中…" : "发送测试消息" }}
           </button>
@@ -371,4 +371,13 @@ async function testNotification(): Promise<void> {
       </form>
     </section>
   </div>
+
+  <ConfirmDialog
+    v-if="testConfirmationOpen"
+    title="发送测试消息"
+    message="将使用当前已保存的飞书配置发送一条测试消息。"
+    confirm-label="发送测试消息"
+    @confirm="sendTestMessage"
+    @cancel="testConfirmationOpen = false"
+  />
 </template>

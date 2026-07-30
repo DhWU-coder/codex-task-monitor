@@ -22,6 +22,8 @@
   --teal-soft: #dff3ee;
   --button-primary: #087f75;
   --button-primary-hover: #075e57;
+  --button-danger: #b33a3a;
+  --button-danger-hover: #942f2f;
   --active-tab-bg: #17252a;
   --amber: #a65f00;
   --amber-soft: #fff0cc;
@@ -86,6 +88,8 @@ html[data-theme="dark"] {
   --teal-soft: #183b39;
   --button-primary: #237f75;
   --button-primary-hover: #2d968a;
+  --button-danger: #b95050;
+  --button-danger-hover: #cf6464;
   --active-tab-bg: #28675f;
   --amber: #efb45a;
   --amber-soft: #3b301e;
@@ -289,6 +293,14 @@ select:focus-visible {
   font-weight: 500;
 }
 
+.task-toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .filter-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -332,17 +344,65 @@ select:focus-visible {
   font-size: 0.72rem;
 }
 
-.task-grid {
+.task-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.bulk-watch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 18px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px 12px 18px;
+  background: var(--surface-action);
+  box-shadow: var(--shadow);
+}
+
+.bulk-watch-summary {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.bulk-watch-summary strong {
+  color: var(--teal-dark);
+  font-size: 1rem;
+}
+
+.bulk-watch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.bulk-watch-actions .button-quiet {
+  margin-left: 0;
+}
+
+.bulk-watch-divider {
+  width: 1px;
+  height: 24px;
+  margin: 0 3px;
+  background: var(--line-strong);
 }
 
 .task-card {
   position: relative;
-  display: flex;
-  min-height: 354px;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns:
+    minmax(280px, 1.25fr)
+    minmax(300px, 1fr)
+    minmax(360px, auto);
+  min-height: 176px;
+  align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -385,13 +445,72 @@ select:focus-visible {
   box-shadow: var(--shadow-hover);
 }
 
+.task-card[data-selected="true"] {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px var(--teal-soft);
+}
+
 .task-card-header {
   display: flex;
-  min-height: 58px;
+  min-height: auto;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
-  padding: 15px 20px 10px 24px;
+  margin-bottom: 17px;
+  padding: 0;
+}
+
+.task-selection {
+  position: relative;
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  cursor: pointer;
+}
+
+.task-selection input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.task-selection span {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-input);
+  transition:
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.task-selection input:checked + span {
+  border-color: var(--teal);
+  background: var(--teal);
+}
+
+.task-selection input:checked + span::after {
+  color: var(--on-accent);
+  content: "✓";
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.task-selection input:focus-visible + span {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.task-selection input:disabled + span {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 .status-badge,
@@ -436,31 +555,35 @@ select:focus-visible {
   background: var(--blue-soft);
 }
 
-.task-card-body {
-  flex: 1;
-  padding: 12px 24px 20px;
+.task-row-identity {
+  min-width: 0;
+  border-right: 1px solid var(--line-subtle);
+  padding: 20px 22px 20px 25px;
 }
 
-.task-card-body h2 {
-  margin: 0 0 22px;
+.task-row-identity h2 {
+  margin: 0;
   font-family: Georgia, "Songti SC", serif;
-  font-size: 1.42rem;
+  font-size: 1.32rem;
   font-weight: 600;
   line-height: 1.32;
+  overflow-wrap: anywhere;
 }
 
-.task-meta {
+.task-row-meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 13px 20px;
+  align-content: center;
+  gap: 18px 22px;
   margin: 0;
+  padding: 20px 22px;
 }
 
-.task-meta div:last-child {
+.task-row-meta div:last-child {
   grid-column: 1 / -1;
 }
 
-.task-meta dt,
+.task-row-meta dt,
 .details-list dt {
   margin-bottom: 4px;
   color: var(--meta);
@@ -470,7 +593,7 @@ select:focus-visible {
   text-transform: uppercase;
 }
 
-.task-meta dd,
+.task-row-meta dd,
 .details-list dd {
   overflow-wrap: anywhere;
   margin: 0;
@@ -497,13 +620,20 @@ select:focus-visible {
   color: var(--attention-text);
 }
 
-.task-actions {
+.task-row-actions {
   display: flex;
   flex-wrap: wrap;
+  align-content: center;
+  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  padding: 16px 20px 18px 24px;
-  border-top: 1px solid var(--line-subtle);
+  border-left: 1px solid var(--line-subtle);
+  padding: 20px;
   background: var(--surface-action);
+}
+
+.task-row-actions .button-quiet {
+  margin-left: 0;
 }
 
 .button,
@@ -535,6 +665,15 @@ select:focus-visible {
 
 .button-primary:hover:not(:disabled) {
   background: var(--button-primary-hover);
+}
+
+.button-danger {
+  color: var(--on-accent);
+  background: var(--button-danger);
+}
+
+.button-danger:hover:not(:disabled) {
+  background: var(--button-danger-hover);
 }
 
 .button-secondary {
@@ -592,6 +731,80 @@ select:focus-visible {
   padding: 12px 15px;
   color: var(--alert-text);
   background: var(--surface-alert);
+}
+
+.confirm-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--overlay);
+  backdrop-filter: blur(7px);
+}
+
+.confirm-dialog {
+  position: relative;
+  display: grid;
+  width: min(440px, 100%);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  padding: 28px;
+  background: var(--paper);
+  box-shadow: var(--shadow-dialog);
+}
+
+.confirm-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+}
+
+.confirm-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--teal-dark);
+  background: var(--teal-soft);
+  font-size: 1.15rem;
+  font-weight: 850;
+}
+
+.confirm-icon[data-tone="danger"] {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.confirm-copy {
+  min-width: 0;
+  padding-right: 32px;
+}
+
+.confirm-copy h2 {
+  margin: 1px 0 8px;
+  font-family: Georgia, "Songti SC", serif;
+  font-size: 1.38rem;
+  font-weight: 600;
+}
+
+.confirm-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+
+.confirm-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 26px;
 }
 
 .dialog-backdrop {
@@ -828,6 +1041,20 @@ select:focus-visible {
   padding-top: 6px;
 }
 
+@media (max-width: 960px) {
+  .task-card {
+    grid-template-columns: minmax(0, 1.2fr) minmax(280px, 1fr);
+  }
+
+  .task-row-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    border-top: 1px solid var(--line-subtle);
+    border-left: 0;
+    padding: 14px 20px 16px 25px;
+  }
+}
+
 @media (max-width: 840px) {
   .app-shell {
     padding: 28px 20px 56px;
@@ -848,6 +1075,20 @@ select:focus-visible {
   .task-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .task-toolbar-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .bulk-watch-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .bulk-watch-actions {
+    justify-content: flex-start;
   }
 
   .checkbox-grid {
@@ -887,26 +1128,73 @@ select:focus-visible {
     width: 100%;
   }
 
+  .task-toolbar-controls > .button {
+    width: 100%;
+  }
+
   .filter-tab {
     flex: 1 1 42%;
     justify-content: center;
   }
 
-  .task-grid {
-    grid-template-columns: 1fr;
+  .bulk-watch-actions {
+    width: 100%;
   }
 
-  .task-meta,
+  .bulk-watch-actions .button {
+    flex: 1 1 42%;
+  }
+
+  .bulk-watch-divider {
+    display: none;
+  }
+
+  .task-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task-row-identity {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-subtle);
+  }
+
+  .task-row-meta,
   .details-list,
   .form-grid,
   .checkbox-grid {
     grid-template-columns: 1fr;
   }
 
-  .task-meta div:last-child,
+  .task-row-meta {
+    border-bottom: 1px solid var(--line-subtle);
+  }
+
+  .task-row-meta div:last-child,
   .details-wide,
   .form-wide {
     grid-column: auto;
+  }
+
+  .task-row-actions {
+    grid-column: auto;
+    border-top: 0;
+  }
+
+  .confirm-dialog {
+    grid-template-columns: 1fr;
+    padding: 24px;
+  }
+
+  .confirm-copy {
+    padding-right: 0;
+  }
+
+  .confirm-actions {
+    flex-direction: column-reverse;
+  }
+
+  .confirm-actions .button {
+    width: 100%;
   }
 
   .button-quiet {

@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue"
+import {
+  computed,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from "vue"
 
 import {
   createTaskEventSource,
@@ -10,6 +16,8 @@ import {
   startWatch,
   stopWatch,
 } from "./api"
+import BulkWatchBar from "./components/BulkWatchBar.vue"
+import ConfirmDialog from "./components/ConfirmDialog.vue"
 import FilterTabs, {
   type TaskFilter,
 } from "./components/FilterTabs.vue"
@@ -35,10 +43,14 @@ const sources = ref<Record<string, SourceHealth>>({})
 const config = ref<PublicConfig | null>(null)
 const activeFilter = ref<TaskFilter>("running")
 const selectedTask = ref<TaskSnapshot | null>(null)
+const pendingManualCompletionTask = ref<TaskSnapshot | null>(null)
 const settingsOpen = ref(false)
 const loading = ref(true)
 const errorMessage = ref("")
 const busyTasks = ref(new Set<string>())
+const selectionMode = ref(false)
+const selectedTaskIds = ref(new Set<string>())
+const bulkWatching = ref(false)
 const theme = ref<Theme>(initializeTheme())
 const liveStatus = ref<"connecting" | "connected" | "disconnected">(
   "connecting",
@@ -90,6 +102,127 @@ const visibleTasks = computed(() => {
   }
   return tasks.value
 })
+
+function enterSelectionMode(): void {
+  selectionMode.value = true
+}
+
+function exitSelectionMode(): void {
+  selectedTaskIds.value = new Set()
+  selectionMode.value = false
+}
+
+function toggleTaskSelection(threadId: string): void {
+  const task = tasks.value.find((item) => item.thread_id === threadId)
+  if (!task || !activeStatuses.has(task.status)) {
+    return
+  }
+  const next = new Set(selectedTaskIds.value)
+  if (next.has(threadId)) {
+    next.delete(threadId)
+  } else {
+    next.add(threadId)
+  }
+  selectedTaskIds.value = next
+}
+
+function selectAllVisible(): void {
+  const next = new Set(selectedTaskIds.value)
+  for (const task of visibleTasks.value) {
+    if (activeStatuses.has(task.status)) {
+      next.add(task.thread_id)
+    }
+  }
+  selectedTaskIds.value = next
+}
+
+function clearSelection(): void {
+  selectedTaskIds.value = new Set()
+}
+
+function targetWatchMode(
+  task: TaskSnapshot,
+  requestedMode: WatchMode,
+): WatchMode {
+  if (
+    requestedMode === "current_turn"
+    && task.monitored
+    && task.watch_mode === "persistent"
+  ) {
+    return "persistent"
+  }
+  return requestedMode
+}
+
+async function bulkWatchTasks(requestedMode: WatchMode): Promise<void> {
+  if (bulkWatching.value) {
+    return
+  }
+  const selectedTasks = tasks.value.filter(
+    (task) =>
+      selectedTaskIds.value.has(task.thread_id)
+      && activeStatuses.has(task.status),
+  )
+  if (!selectedTasks.length) {
+    return
+  }
+
+  bulkWatching.value = true
+  errorMessage.value = ""
+  for (const task of selectedTasks) {
+    setBusy(task.thread_id, true)
+  }
+
+  try {
+    const results = await Promise.allSettled(
+      selectedTasks.map(async (task) => {
+        const mode = targetWatchMode(task, requestedMode)
+        if (task.monitored && task.watch_mode === mode) {
+          return { threadId: task.thread_id, mode }
+        }
+        await startWatch(task.thread_id, mode)
+        return { threadId: task.thread_id, mode }
+      }),
+    )
+
+    const succeededIds = new Set<string>()
+    const failureMessages: string[] = []
+    for (const [index, result] of results.entries()) {
+      const task = selectedTasks[index]
+      if (result.status === "fulfilled") {
+        succeededIds.add(task.thread_id)
+        replaceTask(task.thread_id, {
+          monitored: true,
+          watch_mode: result.value.mode,
+        })
+      } else {
+        failureMessages.push(
+          result.reason instanceof Error
+            ? result.reason.message
+            : "未知错误",
+        )
+      }
+    }
+
+    selectedTaskIds.value = new Set(
+      [...selectedTaskIds.value].filter(
+        (threadId) => !succeededIds.has(threadId),
+      ),
+    )
+    if (failureMessages.length) {
+      errorMessage.value =
+        `${failureMessages.length} 个任务启动监控失败：`
+        + failureMessages[0]
+    } else {
+      exitSelectionMode()
+    }
+  } finally {
+    for (const task of selectedTasks) {
+      setBusy(task.thread_id, false)
+    }
+    bulkWatching.value = false
+  }
+}
 
 async function loadInitial(): Promise<void> {
   loading.value = true
@@ -203,12 +336,6 @@ async function completeTaskManually(task: TaskSnapshot): Promise<void> {
   if (!activeStatuses.has(task.status)) {
     return
   }
-  const confirmed = window.confirm(
-    "确认将当前轮次标记为已结束？同一轮后续更新将被忽略。",
-  )
-  if (!confirmed) {
-    return
-  }
   setBusy(task.thread_id, true)
   errorMessage.value = ""
   try {
@@ -219,6 +346,14 @@ async function completeTaskManually(task: TaskSnapshot): Promise<void> {
       error instanceof Error ? error.message : "标记本轮已结束失败"
   } finally {
     setBusy(task.thread_id, false)
+  }
+}
+
+function confirmManualCompletion(): void {
+  const task = pendingManualCompletionTask.value
+  pendingManualCompletionTask.value = null
+  if (task) {
+    void completeTaskManually(task)
   }
 }
 
@@ -251,6 +386,32 @@ function toggleTheme(): void {
   setThemePreference(nextTheme)
   theme.value = nextTheme
 }
+
+watch(tasks, (taskRows) => {
+  const activeTaskIds = new Set(
+    taskRows
+      .filter((task) => activeStatuses.has(task.status))
+      .map((task) => task.thread_id),
+  )
+  const next = new Set(
+    [...selectedTaskIds.value].filter((threadId) =>
+      activeTaskIds.has(threadId),
+    ),
+  )
+  if (next.size !== selectedTaskIds.value.size) {
+    selectedTaskIds.value = next
+  }
+  if (
+    pendingManualCompletionTask.value
+    && !taskRows.some(
+      (task) =>
+        task.thread_id === pendingManualCompletionTask.value?.thread_id
+        && activeStatuses.has(task.status),
+    )
+  ) {
+    pendingManualCompletionTask.value = null
+  }
+})
 
 onMounted(async () => {
   stopThemeWatch = watchSystemTheme((nextTheme) => {
@@ -318,27 +479,55 @@ onUnmounted(() => {
           <p class="eyebrow">TASKS</p>
           <h2>本机任务</h2>
         </div>
-        <FilterTabs
-          :active="activeFilter"
-          :counts="counts"
-          @change="activeFilter = $event"
-        />
+        <div class="task-toolbar-controls">
+          <FilterTabs
+            :active="activeFilter"
+            :counts="counts"
+            @change="activeFilter = $event"
+          />
+          <button
+            v-if="!selectionMode"
+            type="button"
+            class="button button-secondary"
+            data-action="enter-selection"
+            @click="enterSelectionMode"
+          >
+            选择
+          </button>
+        </div>
       </section>
 
       <p v-if="errorMessage" class="alert" role="alert">
         {{ errorMessage }}
       </p>
+      <BulkWatchBar
+        v-if="selectionMode"
+        :selected-count="selectedTaskIds.size"
+        :busy="bulkWatching"
+        @select-all="selectAllVisible"
+        @clear-selection="clearSelection"
+        @watch="bulkWatchTasks"
+        @exit="exitSelectionMode"
+      />
       <div v-if="loading" class="empty-state">正在读取任务状态…</div>
-      <div v-else-if="visibleTasks.length" class="task-grid">
+      <div
+        v-else-if="visibleTasks.length"
+        class="task-list"
+        data-task-list
+      >
         <TaskCard
           v-for="task in visibleTasks"
           :key="task.thread_id"
           :task="task"
           :busy="busyTasks.has(task.thread_id)"
+          :selection-mode="selectionMode"
+          :selected="selectedTaskIds.has(task.thread_id)"
+          :selectable="activeStatuses.has(task.status)"
           @watch="watchTask(task, $event)"
           @stop="stopTaskWatch(task)"
-          @manual-completion="completeTaskManually(task)"
+          @manual-completion="pendingManualCompletionTask = task"
           @details="selectedTask = task"
+          @toggle-selection="toggleTaskSelection(task.thread_id)"
         />
       </div>
       <div v-else class="empty-state">
@@ -359,6 +548,16 @@ onUnmounted(() => {
       :initial-config="config"
       @saved="config = $event"
       @close="settingsOpen = false"
+    />
+
+    <ConfirmDialog
+      v-if="pendingManualCompletionTask"
+      title="标记本轮已结束"
+      message="确认后会从当前运行列表移除；同一轮后续更新将被忽略，任务下一轮启动时仍会重新出现。"
+      confirm-label="确认结束"
+      tone="danger"
+      @confirm="confirmManualCompletion"
+      @cancel="pendingManualCompletionTask = null"
     />
   </div>
 </template>

@@ -4,6 +4,9 @@ import type { TaskSnapshot, TaskStatus, WatchMode } from "../types"
 const props = defineProps<{
   task: TaskSnapshot
   busy: boolean
+  selectionMode: boolean
+  selected: boolean
+  selectable: boolean
 }>()
 
 defineEmits<{
@@ -11,6 +14,7 @@ defineEmits<{
   stop: []
   manualCompletion: []
   details: []
+  toggleSelection: []
 }>()
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -55,42 +59,60 @@ function watchLabel(mode: WatchMode | null): string {
 </script>
 
 <template>
-  <article class="task-card" :data-status="task.status">
-    <header class="task-card-header">
-      <span class="status-badge" :data-status="task.status">
-        {{ statusLabels[task.status] }}
-      </span>
-      <span v-if="task.monitored" class="watch-badge">
-        {{ watchLabel(task.watch_mode) }}
-      </span>
-    </header>
-
-    <div class="task-card-body">
+  <article
+    class="task-card"
+    :data-status="task.status"
+    :data-selected="selected || undefined"
+  >
+    <section class="task-row-identity" data-task-identity>
+      <header class="task-card-header">
+        <label
+          v-if="selectionMode && selectable"
+          class="task-selection"
+        >
+          <input
+            type="checkbox"
+            :checked="selected"
+            :data-task-selection="task.thread_id"
+            :aria-label="`选择任务：${task.title || '未命名任务'}`"
+            :disabled="busy"
+            @change="$emit('toggleSelection')"
+          />
+          <span aria-hidden="true"></span>
+        </label>
+        <span class="status-badge" :data-status="task.status">
+          {{ statusLabels[task.status] }}
+        </span>
+        <span v-if="task.monitored" class="watch-badge">
+          {{ watchLabel(task.watch_mode) }}
+        </span>
+      </header>
       <h2>{{ task.title || "未命名任务" }}</h2>
-      <dl class="task-meta">
-        <div>
-          <dt>项目</dt>
-          <dd>{{ task.project_name || "未识别" }}</dd>
-        </div>
-        <div>
-          <dt>分支</dt>
-          <dd>{{ task.branch || "无分支信息" }}</dd>
-        </div>
-        <div>
-          <dt>运行时长</dt>
-          <dd>{{ formatElapsed(task) }}</dd>
-        </div>
-      </dl>
       <p v-if="task.waiting_reason" class="task-attention">
         {{ task.waiting_reason }}
       </p>
       <p v-else-if="task.latest_summary" class="task-summary">
         {{ task.latest_summary }}
       </p>
-    </div>
+    </section>
 
-    <footer class="task-actions">
-      <template v-if="isActive(props.task)">
+    <dl class="task-row-meta" data-task-meta>
+      <div>
+        <dt>项目</dt>
+        <dd>{{ task.project_name || "未识别" }}</dd>
+      </div>
+      <div>
+        <dt>分支</dt>
+        <dd>{{ task.branch || "无分支信息" }}</dd>
+      </div>
+      <div>
+        <dt>运行时长</dt>
+        <dd>{{ formatElapsed(task) }}</dd>
+      </div>
+    </dl>
+
+    <footer class="task-row-actions" data-task-actions>
+      <template v-if="isActive(props.task) && !selectionMode">
         <button
           v-if="task.monitored"
           type="button"
