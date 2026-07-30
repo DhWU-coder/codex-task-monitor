@@ -9,12 +9,12 @@ const props = defineProps<{
   selectable: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   watch: [mode: WatchMode]
   stop: []
-  manualCompletion: []
   details: []
   toggleSelection: []
+  openContextMenu: [position: { x: number; y: number }]
 }>()
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -56,6 +56,17 @@ function formatElapsed(task: TaskSnapshot): string {
 function watchLabel(mode: WatchMode | null): string {
   return mode === "persistent" ? "持续监控中" : "当前轮监控中"
 }
+
+function handleContextMenu(event: MouseEvent): void {
+  if (props.selectionMode || !props.selectable) {
+    return
+  }
+  event.preventDefault()
+  emit("openContextMenu", {
+    x: event.clientX,
+    y: event.clientY,
+  })
+}
 </script>
 
 <template>
@@ -63,9 +74,10 @@ function watchLabel(mode: WatchMode | null): string {
     class="task-card"
     :data-status="task.status"
     :data-selected="selected || undefined"
+    @contextmenu="handleContextMenu"
   >
     <section class="task-row-identity" data-task-identity>
-      <header class="task-card-header">
+      <header class="task-card-header" data-task-primary>
         <label
           v-if="selectionMode && selectable"
           class="task-selection"
@@ -83,16 +95,13 @@ function watchLabel(mode: WatchMode | null): string {
         <span class="status-badge" :data-status="task.status">
           {{ statusLabels[task.status] }}
         </span>
+        <h2>{{ task.title || "未命名任务" }}</h2>
         <span v-if="task.monitored" class="watch-badge">
           {{ watchLabel(task.watch_mode) }}
         </span>
       </header>
-      <h2>{{ task.title || "未命名任务" }}</h2>
       <p v-if="task.waiting_reason" class="task-attention">
         {{ task.waiting_reason }}
-      </p>
-      <p v-else-if="task.latest_summary" class="task-summary">
-        {{ task.latest_summary }}
       </p>
     </section>
 
@@ -143,15 +152,6 @@ function watchLabel(mode: WatchMode | null): string {
             持续监控
           </button>
         </template>
-        <button
-          type="button"
-          class="button button-secondary"
-          :disabled="busy"
-          data-action="manual-completion"
-          @click="$emit('manualCompletion')"
-        >
-          标记本轮已结束
-        </button>
       </template>
       <button
         type="button"

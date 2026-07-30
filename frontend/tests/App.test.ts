@@ -168,6 +168,32 @@ async function renderApp(): Promise<VueWrapper> {
   return wrapper
 }
 
+async function openTaskContextMenu(
+  wrapper: VueWrapper,
+  card = wrapper.get(".task-card"),
+): Promise<MouseEvent> {
+  const event = new MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    clientX: 80,
+    clientY: 100,
+  })
+  card.element.dispatchEvent(event)
+  await wrapper.vm.$nextTick()
+  return event
+}
+
+async function chooseManualCompletion(
+  wrapper: VueWrapper,
+): Promise<void> {
+  await openTaskContextMenu(wrapper)
+  const action = document.querySelector(
+    "[data-action='context-manual-completion']",
+  ) as HTMLButtonElement
+  action.click()
+  await wrapper.vm.$nextTick()
+}
+
 beforeEach(() => {
   Object.defineProperty(window, "localStorage", {
     configurable: true,
@@ -521,10 +547,12 @@ describe("任务监控主页面", () => {
 
   it("取消手动结束确认时不调用接口", async () => {
     const wrapper = await renderApp()
-    const button = wrapper.get("button[data-action='manual-completion']")
 
-    await button.trigger("click")
-    await wrapper.vm.$nextTick()
+    expect(
+      wrapper.find("[data-action='manual-completion']").exists(),
+    ).toBe(false)
+
+    await chooseManualCompletion(wrapper)
 
     const dialog = document.querySelector("[role='alertdialog']")
     const confirmButton = document.querySelector(
@@ -548,10 +576,7 @@ describe("任务监控主页面", () => {
   it("确认手动结束后任务进入最近结束", async () => {
     const wrapper = await renderApp()
 
-    await wrapper
-      .get("button[data-action='manual-completion']")
-      .trigger("click")
-    await wrapper.vm.$nextTick()
+    await chooseManualCompletion(wrapper)
     const confirmButton = document.querySelector(
       "[data-action='confirm-dialog-confirm']",
     ) as HTMLButtonElement
@@ -576,10 +601,7 @@ describe("任务监控主页面", () => {
     )
     const wrapper = await renderApp()
 
-    await wrapper
-      .get("button[data-action='manual-completion']")
-      .trigger("click")
-    await wrapper.vm.$nextTick()
+    await chooseManualCompletion(wrapper)
     const confirmButton = document.querySelector(
       "[data-action='confirm-dialog-confirm']",
     ) as HTMLButtonElement
@@ -589,11 +611,77 @@ describe("任务监控主页面", () => {
     expect(wrapper.get("[role='alert']").text()).toContain(
       "任务当前轮次已经结束",
     )
+
+    await openTaskContextMenu(wrapper)
     expect(
-      wrapper.get("button[data-action='manual-completion']").attributes(
-        "disabled",
-      ),
-    ).toBeUndefined()
+      (
+        document.querySelector(
+          "[data-action='context-manual-completion']",
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false)
+  })
+
+  it("终态任务和选择模式保留原生右键菜单", async () => {
+    const wrapper = await renderApp()
+
+    await wrapper.get("button[data-filter='all']").trigger("click")
+    const terminalCard = wrapper
+      .findAll(".task-card")
+      .find((card) => card.text().includes("已经完成的任务"))
+    expect(terminalCard).toBeDefined()
+
+    const terminalEvent = await openTaskContextMenu(
+      wrapper,
+      terminalCard,
+    )
+    expect(terminalEvent.defaultPrevented).toBe(false)
+    expect(
+      document.querySelector("[role='menu']"),
+    ).toBeNull()
+
+    await wrapper.get("button[data-filter='running']").trigger("click")
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+    const selectionEvent = await openTaskContextMenu(wrapper)
+
+    expect(selectionEvent.defaultPrevented).toBe(false)
+    expect(
+      document.querySelector("[role='menu']"),
+    ).toBeNull()
+  })
+
+  it("进入选择模式会关闭已经打开的右键菜单", async () => {
+    const wrapper = await renderApp()
+
+    await openTaskContextMenu(wrapper)
+    expect(document.querySelector("[role='menu']")).not.toBeNull()
+
+    await wrapper.get("[data-action='enter-selection']").trigger("click")
+
+    expect(document.querySelector("[role='menu']")).toBeNull()
+  })
+
+  it("SSE 终态更新会关闭任务右键菜单", async () => {
+    const wrapper = await renderApp()
+
+    await openTaskContextMenu(wrapper)
+    expect(document.querySelector("[role='menu']")).not.toBeNull()
+
+    source.emit("tasks", {
+      tasks: [
+        {
+          ...baseTask,
+          status: "completed",
+          completed_at: "2026-07-29T09:04:00Z",
+        },
+      ],
+    })
+    await flushPromises()
+
+    expect(document.querySelector("[role='menu']")).toBeNull()
+    expect(
+      document.querySelector("[role='alertdialog']"),
+    ).toBeNull()
   })
 
   it("详情展示任务安全摘要", async () => {

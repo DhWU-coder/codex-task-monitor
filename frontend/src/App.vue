@@ -24,6 +24,7 @@ import FilterTabs, {
 import SettingsPanel from "./components/SettingsPanel.vue"
 import StatusBar from "./components/StatusBar.vue"
 import TaskCard from "./components/TaskCard.vue"
+import TaskContextMenu from "./components/TaskContextMenu.vue"
 import TaskDetails from "./components/TaskDetails.vue"
 import {
   initializeTheme,
@@ -51,6 +52,11 @@ const busyTasks = ref(new Set<string>())
 const selectionMode = ref(false)
 const selectedTaskIds = ref(new Set<string>())
 const bulkWatching = ref(false)
+const taskContextMenu = ref<{
+  task: TaskSnapshot
+  x: number
+  y: number
+} | null>(null)
 const theme = ref<Theme>(initializeTheme())
 const liveStatus = ref<"connecting" | "connected" | "disconnected">(
   "connecting",
@@ -104,6 +110,7 @@ const visibleTasks = computed(() => {
 })
 
 function enterSelectionMode(): void {
+  taskContextMenu.value = null
   selectionMode.value = true
 }
 
@@ -138,6 +145,36 @@ function selectAllVisible(): void {
 
 function clearSelection(): void {
   selectedTaskIds.value = new Set()
+}
+
+function openTaskContextMenu(
+  task: TaskSnapshot,
+  position: { x: number; y: number },
+): void {
+  if (
+    selectionMode.value
+    || !activeStatuses.has(task.status)
+  ) {
+    return
+  }
+  taskContextMenu.value = {
+    task,
+    ...position,
+  }
+}
+
+function startManualCompletionFromMenu(): void {
+  const context = taskContextMenu.value
+  taskContextMenu.value = null
+  if (!context) {
+    return
+  }
+  const latestTask = tasks.value.find(
+    (task) => task.thread_id === context.task.thread_id,
+  )
+  if (latestTask && activeStatuses.has(latestTask.status)) {
+    pendingManualCompletionTask.value = latestTask
+  }
 }
 
 function targetWatchMode(
@@ -411,6 +448,16 @@ watch(tasks, (taskRows) => {
   ) {
     pendingManualCompletionTask.value = null
   }
+  if (
+    taskContextMenu.value
+    && !taskRows.some(
+      (task) =>
+        task.thread_id === taskContextMenu.value?.task.thread_id
+        && activeStatuses.has(task.status),
+    )
+  ) {
+    taskContextMenu.value = null
+  }
 })
 
 onMounted(async () => {
@@ -525,9 +572,9 @@ onUnmounted(() => {
           :selectable="activeStatuses.has(task.status)"
           @watch="watchTask(task, $event)"
           @stop="stopTaskWatch(task)"
-          @manual-completion="pendingManualCompletionTask = task"
           @details="selectedTask = task"
           @toggle-selection="toggleTaskSelection(task.thread_id)"
+          @open-context-menu="openTaskContextMenu(task, $event)"
         />
       </div>
       <div v-else class="empty-state">
@@ -548,6 +595,19 @@ onUnmounted(() => {
       :initial-config="config"
       @saved="config = $event"
       @close="settingsOpen = false"
+    />
+
+    <TaskContextMenu
+      v-if="taskContextMenu"
+      :key="
+        `${taskContextMenu.task.thread_id}:`
+        + `${taskContextMenu.x}:${taskContextMenu.y}`
+      "
+      :x="taskContextMenu.x"
+      :y="taskContextMenu.y"
+      :disabled="busyTasks.has(taskContextMenu.task.thread_id)"
+      @manual-completion="startManualCompletionFromMenu"
+      @close="taskContextMenu = null"
     />
 
     <ConfirmDialog
