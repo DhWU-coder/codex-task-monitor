@@ -1103,6 +1103,12 @@ select:focus-visible {
   padding-top: 6px;
 }
 
+@media (min-width: 961px) {
+  .task-card {
+    min-height: 84px;
+  }
+}
+
 @media (max-width: 960px) {
   .task-card {
     grid-template-columns: minmax(0, 1.2fr) minmax(280px, 1fr);
