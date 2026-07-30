@@ -48,6 +48,7 @@ export interface PublicConfig {
     refresh_interval_seconds: number
     reconcile_interval_seconds: number
     recent_completed_hours: number
+    orphaned_running_timeout_minutes: number
   }
   feishu: {
     app_id: string

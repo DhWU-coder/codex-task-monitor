@@ -18,6 +18,7 @@ http://127.0.0.1:6664
 - 支持当前轮次监控和同一任务后续轮次的持续监控。
 - 向一个预先配置的飞书账号发送幂等文本通知。
 - 使用 `config.yaml` 和 UI 设置页管理端口、飞书与通知开关。
+- 使用太阳/月亮按钮切换浅色与深色主题；首次跟随系统，手动选择后保存在当前浏览器。
 - 提供 `start`、`run`、`stop`、`restart` 四个 CLI 命令。
 
 ## 环境要求
@@ -151,12 +152,13 @@ codex:
   refresh_interval_seconds: 2
   reconcile_interval_seconds: 30
   recent_completed_hours: 24
+  orphaned_running_timeout_minutes: 60
 
 feishu:
   app_id: ""
   app_secret: ""
   receive_id: ""
-  receive_id_type: open_id
+  receive_id_type: email
 
 notifications:
   enabled: true
@@ -174,6 +176,7 @@ notifications:
 - `server.port` 默认是 `6664`。修改 host 或端口后需要执行 `codex-task-monitor restart`。
 - `codex.command` 是本机 Codex CLI 命令，通常保持 `codex`。
 - `recent_completed_hours` 控制看板保留非活动任务的时间窗口。
+- `orphaned_running_timeout_minutes` 默认是 `60`。只有 App Server 返回 `notLoaded`，且本地会话仍停在活动状态并超过该时长没有新记录时，任务才会按中断处理；后续出现新会话事件会恢复。
 - `app_secret` 在 UI 中不会回显。UI 留空会保留已有密钥，只有勾选“清除已保存密钥”才会删除。
 - 飞书与通知开关保存后立即热更新，无需重启。
 
@@ -185,9 +188,11 @@ notifications:
 2. 为应用启用机器人能力。
 3. 申请发送消息所需权限，并确保应用可用范围包含接收账号。
 4. 取得应用的 App ID 和 App Secret。
-5. 取得接收人的 `open_id`，或选择匹配的 `union_id`、`user_id`、`email` 类型。
+5. 推荐在 UI 中选择 `email`，并填写接收人在当前飞书租户中的企业邮箱。
 6. 在 UI 设置页或 `config.yaml` 中填写配置并保存。
 7. 在设置页点击“发送测试消息”，确认后验证私聊是否到达。
+
+如需使用 ID，也可以选择 `open_id`、`union_id` 或 `user_id` 并填写匹配的值。`open_id` 与具体飞书应用绑定，同一个用户在不同应用中的 `open_id` 可能不同，必须使用当前 App ID 对应的值。已有配置会保留原接收人类型，不会自动改成邮箱。
 
 飞书鉴权使用租户访问令牌，发送接口使用飞书消息 API。权限名和审批流程可能随飞书开放平台调整，应以[飞书服务端 API 文档](https://open.feishu.cn/document/server-docs/im-v1/message/create)为准。
 

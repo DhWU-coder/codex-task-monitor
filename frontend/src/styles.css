@@ -1,24 +1,136 @@
 :root {
-  color: #17252a;
-  background: #f3f1eb;
+  color: var(--ink);
+  background: var(--page-bg);
+  color-scheme: light;
   font-family:
     Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
     "PingFang SC", "Microsoft YaHei", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  --page-bg: #f3f1eb;
+  --grid-line: rgba(23, 37, 42, 0.035);
   --ink: #17252a;
   --muted: #667377;
   --paper: #fffefa;
   --line: #d9dedb;
+  --line-strong: #cbd2cf;
+  --line-hover: #9ca9a5;
+  --line-subtle: #e7e9e7;
+  --line-dashed: #bdc5c2;
   --teal: #087f75;
   --teal-dark: #075e57;
   --teal-soft: #dff3ee;
+  --button-primary: #087f75;
+  --button-primary-hover: #075e57;
+  --active-tab-bg: #17252a;
   --amber: #a65f00;
   --amber-soft: #fff0cc;
   --red: #b33a3a;
   --red-soft: #fae4e1;
   --blue-soft: #e4edf7;
+  --on-accent: #fff;
+  --surface-glass: rgba(255, 254, 250, 0.82);
+  --surface-filter: rgba(255, 254, 250, 0.7);
+  --surface-empty: rgba(255, 254, 250, 0.55);
+  --surface-action: #fbfaf6;
+  --surface-hover: #f7f6f1;
+  --surface-subtle: #f3f5f2;
+  --surface-input: #fff;
+  --surface-icon-hover: #f0f1ee;
+  --surface-danger: #fff7f5;
+  --surface-alert: #fff0ed;
+  --surface-filter-hover: rgba(23, 37, 42, 0.05);
+  --filter-count-bg: rgba(255, 255, 255, 0.16);
+  --meta: #899291;
+  --body-copy: #344246;
+  --label: #4d5b5e;
+  --content: #455357;
+  --placeholder: #9ba4a2;
+  --neutral-badge: #edf0ef;
+  --neutral-badge-text: #4e5b5e;
+  --watch-text: #365d86;
+  --attention-line: #d28a20;
+  --attention-text: #76501a;
+  --status-neutral: #879392;
+  --status-idle: #a9b1b1;
+  --status-online: #1b9d79;
+  --status-offline: #c17463;
+  --status-idle-ring: rgba(169, 177, 177, 0.14);
+  --status-online-ring: rgba(27, 157, 121, 0.14);
+  --status-offline-ring: rgba(193, 116, 99, 0.14);
+  --focus-ring: rgba(8, 127, 117, 0.28);
+  --overlay: rgba(17, 29, 33, 0.48);
+  --alert-border: #e6b9b4;
+  --alert-text: #8e2f2f;
+  --warning-text: #714a10;
   --shadow: 0 18px 44px rgba(28, 44, 49, 0.08);
+  --shadow-hover: 0 22px 54px rgba(28, 44, 49, 0.12);
+  --shadow-status: 0 8px 26px rgba(28, 44, 49, 0.045);
+  --shadow-dialog: 0 28px 80px rgba(13, 26, 31, 0.28);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --page-bg: #0e171a;
+  --grid-line: rgba(191, 224, 218, 0.045);
+  --ink: #e8f0ee;
+  --muted: #9aaba8;
+  --paper: #172226;
+  --line: #334247;
+  --line-strong: #43555b;
+  --line-hover: #607278;
+  --line-subtle: #2b393e;
+  --line-dashed: #46585d;
+  --teal: #43b7aa;
+  --teal-dark: #6bd0c4;
+  --teal-soft: #183b39;
+  --button-primary: #237f75;
+  --button-primary-hover: #2d968a;
+  --active-tab-bg: #28675f;
+  --amber: #efb45a;
+  --amber-soft: #3b301e;
+  --red: #ef817c;
+  --red-soft: #3d2527;
+  --blue-soft: #20374b;
+  --on-accent: #fff;
+  --surface-glass: rgba(23, 34, 38, 0.88);
+  --surface-filter: rgba(23, 34, 38, 0.76);
+  --surface-empty: rgba(23, 34, 38, 0.62);
+  --surface-action: #131e22;
+  --surface-hover: #202e32;
+  --surface-subtle: #1d2a2e;
+  --surface-input: #101a1d;
+  --surface-icon-hover: #223136;
+  --surface-danger: #2d2021;
+  --surface-alert: #382426;
+  --surface-filter-hover: rgba(232, 240, 238, 0.07);
+  --filter-count-bg: rgba(255, 255, 255, 0.16);
+  --meta: #829692;
+  --body-copy: #c3d0cd;
+  --label: #adbcba;
+  --content: #c2cfcc;
+  --placeholder: #738581;
+  --neutral-badge: #29363a;
+  --neutral-badge-text: #b8c5c2;
+  --watch-text: #a6cff3;
+  --attention-line: #d99b3d;
+  --attention-text: #edc681;
+  --status-neutral: #6f817f;
+  --status-idle: #758582;
+  --status-online: #46c49b;
+  --status-offline: #df8775;
+  --status-idle-ring: rgba(117, 133, 130, 0.2);
+  --status-online-ring: rgba(70, 196, 155, 0.18);
+  --status-offline-ring: rgba(223, 135, 117, 0.18);
+  --focus-ring: rgba(67, 183, 170, 0.38);
+  --overlay: rgba(5, 10, 12, 0.7);
+  --alert-border: #78484a;
+  --alert-text: #f1aaa5;
+  --warning-text: #efc77f;
+  --shadow: 0 18px 44px rgba(0, 0, 0, 0.24);
+  --shadow-hover: 0 22px 54px rgba(0, 0, 0, 0.34);
+  --shadow-status: 0 8px 26px rgba(0, 0, 0, 0.2);
+  --shadow-dialog: 0 28px 80px rgba(0, 0, 0, 0.48);
 }
 
 * {
@@ -30,9 +142,9 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    linear-gradient(rgba(23, 37, 42, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(23, 37, 42, 0.035) 1px, transparent 1px),
-    #f3f1eb;
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    var(--page-bg);
   background-size: 32px 32px;
 }
 
@@ -49,7 +161,7 @@ button {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 3px solid rgba(8, 127, 117, 0.28);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -92,9 +204,21 @@ select:focus-visible {
   letter-spacing: 0.16em;
 }
 
-.settings-button {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   flex: none;
   margin-top: 5px;
+}
+
+.theme-toggle {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 1.15rem;
+  line-height: 1;
 }
 
 .status-bar {
@@ -104,8 +228,8 @@ select:focus-visible {
   margin-bottom: 46px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: rgba(255, 254, 250, 0.82);
-  box-shadow: 0 8px 26px rgba(28, 44, 49, 0.045);
+  background: var(--surface-glass);
+  box-shadow: var(--shadow-status);
   backdrop-filter: blur(10px);
 }
 
@@ -136,18 +260,18 @@ select:focus-visible {
   height: 10px;
   flex: none;
   border-radius: 50%;
-  background: #a9b1b1;
-  box-shadow: 0 0 0 5px rgba(169, 177, 177, 0.14);
+  background: var(--status-idle);
+  box-shadow: 0 0 0 5px var(--status-idle-ring);
 }
 
 .status-dot.is-online {
-  background: #1b9d79;
-  box-shadow: 0 0 0 5px rgba(27, 157, 121, 0.14);
+  background: var(--status-online);
+  box-shadow: 0 0 0 5px var(--status-online-ring);
 }
 
 .status-dot.is-offline {
-  background: #c17463;
-  box-shadow: 0 0 0 5px rgba(193, 116, 99, 0.14);
+  background: var(--status-offline);
+  box-shadow: 0 0 0 5px var(--status-offline-ring);
 }
 
 .task-toolbar {
@@ -172,7 +296,7 @@ select:focus-visible {
   padding: 5px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(255, 254, 250, 0.7);
+  background: var(--surface-filter);
 }
 
 .filter-tab {
@@ -191,19 +315,19 @@ select:focus-visible {
 
 .filter-tab:hover {
   color: var(--ink);
-  background: rgba(23, 37, 42, 0.05);
+  background: var(--surface-filter-hover);
 }
 
 .filter-tab.is-active {
-  color: white;
-  background: var(--ink);
+  color: var(--on-accent);
+  background: var(--active-tab-bg);
 }
 
 .filter-count {
   min-width: 20px;
   border-radius: 999px;
   padding: 2px 6px;
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--filter-count-bg);
   text-align: center;
   font-size: 0.72rem;
 }
@@ -233,7 +357,7 @@ select:focus-visible {
   position: absolute;
   inset: 0 auto 0 0;
   width: 4px;
-  background: #879392;
+  background: var(--status-neutral);
   content: "";
 }
 
@@ -243,7 +367,7 @@ select:focus-visible {
 
 .task-card[data-status="waiting_approval"]::before,
 .task-card[data-status="waiting_input"]::before {
-  background: #d28a20;
+  background: var(--attention-line);
 }
 
 .task-card[data-status="failed"]::before,
@@ -253,7 +377,7 @@ select:focus-visible {
 
 .task-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 22px 54px rgba(28, 44, 49, 0.12);
+  box-shadow: var(--shadow-hover);
 }
 
 .task-card-header {
@@ -276,8 +400,8 @@ select:focus-visible {
 }
 
 .status-badge {
-  color: #4e5b5e;
-  background: #edf0ef;
+  color: var(--neutral-badge-text);
+  background: var(--neutral-badge);
 }
 
 .status-badge[data-status="running"] {
@@ -298,7 +422,7 @@ select:focus-visible {
 }
 
 .watch-badge {
-  color: #365d86;
+  color: var(--watch-text);
   background: var(--blue-soft);
 }
 
@@ -329,7 +453,7 @@ select:focus-visible {
 .task-meta dt,
 .details-list dt {
   margin-bottom: 4px;
-  color: #899291;
+  color: var(--meta);
   font-size: 0.67rem;
   font-weight: 750;
   letter-spacing: 0.08em;
@@ -340,7 +464,7 @@ select:focus-visible {
 .details-list dd {
   overflow-wrap: anywhere;
   margin: 0;
-  color: #344246;
+  color: var(--body-copy);
   font-size: 0.85rem;
   line-height: 1.45;
 }
@@ -358,9 +482,9 @@ select:focus-visible {
 }
 
 .task-attention {
-  border-left: 2px solid #d28a20;
+  border-left: 2px solid var(--attention-line);
   padding-left: 11px;
-  color: #76501a;
+  color: var(--attention-text);
 }
 
 .task-actions {
@@ -368,8 +492,8 @@ select:focus-visible {
   flex-wrap: wrap;
   gap: 8px;
   padding: 16px 20px 18px 24px;
-  border-top: 1px solid #e7e9e7;
-  background: #fbfaf6;
+  border-top: 1px solid var(--line-subtle);
+  background: var(--surface-action);
 }
 
 .button,
@@ -395,22 +519,22 @@ select:focus-visible {
 }
 
 .button-primary {
-  color: white;
-  background: var(--teal);
+  color: var(--on-accent);
+  background: var(--button-primary);
 }
 
 .button-primary:hover:not(:disabled) {
-  background: var(--teal-dark);
+  background: var(--button-primary-hover);
 }
 
 .button-secondary {
-  border-color: #cbd2cf;
+  border-color: var(--line-strong);
   background: var(--paper);
 }
 
 .button-secondary:hover:not(:disabled) {
-  border-color: #9ca9a5;
-  background: #f7f6f1;
+  border-color: var(--line-hover);
+  background: var(--surface-hover);
 }
 
 .button-quiet {
@@ -428,10 +552,10 @@ select:focus-visible {
   min-height: 280px;
   place-items: center;
   align-content: center;
-  border: 1px dashed #bdc5c2;
+  border: 1px dashed var(--line-dashed);
   border-radius: 16px;
   padding: 40px;
-  background: rgba(255, 254, 250, 0.55);
+  background: var(--surface-empty);
   color: var(--muted);
   text-align: center;
 }
@@ -453,11 +577,11 @@ select:focus-visible {
 }
 
 .alert {
-  border: 1px solid #e6b9b4;
+  border: 1px solid var(--alert-border);
   border-radius: 10px;
   padding: 12px 15px;
-  color: #8e2f2f;
-  background: #fff0ed;
+  color: var(--alert-text);
+  background: var(--surface-alert);
 }
 
 .dialog-backdrop {
@@ -468,7 +592,7 @@ select:focus-visible {
   overflow-y: auto;
   place-items: center;
   padding: 24px;
-  background: rgba(17, 29, 33, 0.48);
+  background: var(--overlay);
   backdrop-filter: blur(5px);
 }
 
@@ -476,22 +600,22 @@ select:focus-visible {
   width: min(680px, 100%);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
-  border: 1px solid #cdd4d1;
+  border: 1px solid var(--line-strong);
   border-radius: 18px;
   padding: 27px;
   background: var(--paper);
-  box-shadow: 0 28px 80px rgba(13, 26, 31, 0.28);
+  box-shadow: var(--shadow-dialog);
 }
 
 .settings-dialog {
   width: min(760px, 100%);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
-  border: 1px solid #cdd4d1;
+  border: 1px solid var(--line-strong);
   border-radius: 18px;
   padding: 27px;
   background: var(--paper);
-  box-shadow: 0 28px 80px rgba(13, 26, 31, 0.28);
+  box-shadow: var(--shadow-dialog);
 }
 
 .dialog-header {
@@ -520,7 +644,7 @@ select:focus-visible {
 }
 
 .icon-button:hover {
-  background: #f0f1ee;
+  background: var(--surface-icon-hover);
 }
 
 .details-list {
@@ -538,7 +662,7 @@ select:focus-visible {
 .details-error {
   border-radius: 12px;
   padding: 16px;
-  background: #f3f5f2;
+  background: var(--surface-subtle);
 }
 
 .details-summary h3,
@@ -551,7 +675,7 @@ select:focus-visible {
 .details-error p {
   margin: 0;
   white-space: pre-wrap;
-  color: #455357;
+  color: var(--content);
   font-size: 0.88rem;
   line-height: 1.7;
 }
@@ -576,6 +700,13 @@ select:focus-visible {
   font-weight: 600;
 }
 
+.settings-description {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -585,7 +716,7 @@ select:focus-visible {
 .form-grid label {
   display: grid;
   gap: 7px;
-  color: #4d5b5e;
+  color: var(--label);
   font-size: 0.78rem;
   font-weight: 700;
 }
@@ -603,19 +734,25 @@ select:focus-visible {
   font-weight: 700;
 }
 
+.form-grid .field-help {
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
 .form-grid input,
 .form-grid select {
   width: 100%;
   min-height: 42px;
-  border: 1px solid #cbd2cf;
+  border: 1px solid var(--line-strong);
   border-radius: 9px;
   padding: 9px 11px;
   color: var(--ink);
-  background: white;
+  background: var(--surface-input);
 }
 
 .form-grid input::placeholder {
-  color: #9ba4a2;
+  color: var(--placeholder);
 }
 
 .form-wide {
@@ -632,10 +769,10 @@ select:focus-visible {
   display: flex;
   align-items: center;
   gap: 9px;
-  border: 1px solid #d8ddda;
+  border: 1px solid var(--line);
   border-radius: 9px;
   padding: 10px 12px;
-  color: #455357;
+  color: var(--content);
   font-size: 0.8rem;
   font-weight: 650;
 }
@@ -649,8 +786,8 @@ select:focus-visible {
 .danger-option {
   width: fit-content;
   margin-top: 14px;
-  color: #8e2f2f;
-  background: #fff7f5;
+  color: var(--alert-text);
+  background: var(--surface-danger);
 }
 
 .success-message,
@@ -666,7 +803,7 @@ select:focus-visible {
 }
 
 .restart-message {
-  color: #714a10;
+  color: var(--warning-text);
   background: var(--amber-soft);
 }
 
@@ -714,8 +851,13 @@ select:focus-visible {
     flex-direction: column;
   }
 
-  .settings-button {
+  .header-actions {
+    width: 100%;
     align-self: stretch;
+  }
+
+  .settings-button {
+    flex: 1;
   }
 
   .status-bar {

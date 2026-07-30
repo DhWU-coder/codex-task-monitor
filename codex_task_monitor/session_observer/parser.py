@@ -16,7 +16,9 @@ class SessionParser:
     """维护单个会话文件的最小解析状态。"""
 
     def __init__(self) -> None:
-        self.thread_id: str | None = None
+        self.canonical_thread_id: str | None = None
+        self.canonical_parent_thread_id: str | None = None
+        self.section_thread_id: str | None = None
         self.current_turn_id: str | None = None
         self.cwd: str | None = None
         self.title: str | None = None
@@ -37,6 +39,8 @@ class SessionParser:
             return []
         if record_type == "session_meta":
             return self._session_meta(record, payload, baseline)
+        if not self._in_canonical_section():
+            return []
         if record_type == "turn_context":
             self.current_turn_id = _text(payload.get("turn_id")) or self.current_turn_id
             self.cwd = _text(payload.get("cwd")) or self.cwd
@@ -47,22 +51,34 @@ class SessionParser:
             return self._response_item(record, payload, baseline)
         return []
 
+    def resume_canonical_section(self) -> None:
+        """在跳跃读取后把解析区段恢复为当前文件的规范任务。"""
+
+        self.section_thread_id = self.canonical_thread_id
+
     def _session_meta(
         self,
         record: dict[str, Any],
         payload: dict[str, Any],
         baseline: bool,
     ) -> list[SourceEvent]:
-        """读取会话标识和工作目录。"""
+        """锁定规范会话身份，并跟踪当前回放区段。"""
 
-        self.thread_id = (
+        thread_id = (
             _text(payload.get("id"))
             or _text(payload.get("session_id"))
-            or self.thread_id
         )
-        self.cwd = _text(payload.get("cwd")) or self.cwd
-        if not self.thread_id:
+        if not thread_id:
             return []
+        self.section_thread_id = thread_id
+        if self.canonical_thread_id is None:
+            self.canonical_thread_id = thread_id
+            self.canonical_parent_thread_id = _text(
+                payload.get("forked_from_id")
+            )
+        if not self._in_canonical_section():
+            return []
+        self.cwd = _text(payload.get("cwd")) or self.cwd
         return [
             self._event(
                 record,
@@ -85,7 +101,7 @@ class SessionParser:
             if message and not self.title:
                 self.title = message
             return []
-        if not self.thread_id:
+        if not self.canonical_thread_id:
             return []
         if message_type == "task_started":
             self.current_turn_id = _text(payload.get("turn_id")) or self.current_turn_id
@@ -178,7 +194,10 @@ class SessionParser:
     ) -> list[SourceEvent]:
         """识别持久化的用户输入请求。"""
 
-        if not self.thread_id or payload.get("name") != "request_user_input":
+        if (
+            not self.canonical_thread_id
+            or payload.get("name") != "request_user_input"
+        ):
             return []
         arguments = payload.get("arguments")
         decoded: dict[str, Any] = {}
@@ -225,11 +244,12 @@ class SessionParser:
     ) -> SourceEvent:
         """使用当前解析状态构造标准来源事件。"""
 
-        if not self.thread_id:
+        if not self.canonical_thread_id:
             raise ValueError("会话事件缺少 thread_id")
         return SourceEvent(
             source=SourceKind.SESSION,
-            thread_id=self.thread_id,
+            thread_id=self.canonical_thread_id,
+            parent_thread_id=self.canonical_parent_thread_id,
             turn_id=self.current_turn_id,
             title=self.title,
             status=status,
@@ -243,6 +263,14 @@ class SessionParser:
             error_summary=error_summary,
             authoritative=authoritative,
             baseline=baseline,
+        )
+
+    def _in_canonical_section(self) -> bool:
+        """判断当前记录是否属于文件的规范任务区段。"""
+
+        return bool(
+            self.canonical_thread_id
+            and self.section_thread_id == self.canonical_thread_id
         )
 
 

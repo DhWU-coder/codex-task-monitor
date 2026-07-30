@@ -2,12 +2,35 @@
 
 import asyncio
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from codex_task_monitor.models import SourceEvent
+from codex_task_monitor.models import SourceEvent, TaskStatus
 from codex_task_monitor.session_observer.parser import SessionParser
+
+LIFECYCLE_MESSAGE_TYPES = frozenset(
+    {
+        "task_started",
+        "task_complete",
+        "task_failed",
+        "turn_failed",
+        "turn_aborted",
+        "task_interrupted",
+        "turn_interrupted",
+        "approval_requested",
+    }
+)
+LIFECYCLE_STATUSES = frozenset(
+    {
+        TaskStatus.RUNNING,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.INTERRUPTED,
+        TaskStatus.WAITING_APPROVAL,
+    }
+)
 
 
 @dataclass
@@ -28,12 +51,20 @@ class SessionObserver:
         sessions_root: Path,
         *,
         max_files: int = 200,
+        bootstrap_head_bytes: int = 1024 * 1024,
         bootstrap_tail_bytes: int = 2 * 1024 * 1024,
+        bootstrap_lifecycle_scan_bytes: int = 256 * 1024 * 1024,
+        bootstrap_scan_chunk_bytes: int = 1024 * 1024,
+        bootstrap_scan_max_line_bytes: int = 4 * 1024 * 1024,
         max_increment_bytes: int = 512 * 1024,
     ) -> None:
         self.sessions_root = sessions_root.expanduser().resolve()
         self.max_files = max_files
+        self.bootstrap_head_bytes = bootstrap_head_bytes
         self.bootstrap_tail_bytes = bootstrap_tail_bytes
+        self.bootstrap_lifecycle_scan_bytes = bootstrap_lifecycle_scan_bytes
+        self.bootstrap_scan_chunk_bytes = bootstrap_scan_chunk_bytes
+        self.bootstrap_scan_max_line_bytes = bootstrap_scan_max_line_bytes
         self.max_increment_bytes = max_increment_bytes
         self._cursors: dict[Path, FileCursor] = {}
 
@@ -88,23 +119,192 @@ class SessionObserver:
     ) -> list[SourceEvent]:
         """读取元数据头和有界尾部以建立当前状态基线。"""
 
+        needs_lifecycle_scan = False
         try:
             with path.open("rb") as stream:
                 if size <= self.bootstrap_tail_bytes:
                     data = stream.read()
+                    events = self._parse_bytes(
+                        cursor.parser,
+                        data,
+                        baseline=True,
+                    )
                 else:
-                    head = stream.read(64 * 1024)
+                    head = stream.read(self.bootstrap_head_bytes)
                     stream.seek(max(0, size - self.bootstrap_tail_bytes))
                     tail = stream.read()
                     newline = tail.find(b"\n")
                     if newline >= 0:
                         tail = tail[newline + 1 :]
-                    data = head + b"\n" + tail
+                    complete_head, separator, _ = head.rpartition(b"\n")
+                    head_data = (
+                        complete_head + b"\n" if separator else b""
+                    )
+                    head_events = self._parse_bytes(
+                        cursor.parser,
+                        head_data,
+                        baseline=True,
+                    )
+                    cursor.parser.resume_canonical_section()
+                    tail_events = self._parse_bytes(
+                        cursor.parser,
+                        tail,
+                        baseline=True,
+                    )
+                    events = [
+                        event
+                        for event in head_events
+                        if event.status is TaskStatus.UNKNOWN
+                    ]
+                    events.extend(tail_events)
+                    needs_lifecycle_scan = not any(
+                        event.status in LIFECYCLE_STATUSES
+                        for event in tail_events
+                    )
         except OSError:
             return []
+        if needs_lifecycle_scan:
+            lifecycle = self._find_latest_canonical_lifecycle(
+                path,
+                cursor.parser.canonical_thread_id,
+                size,
+            )
+            if lifecycle is not None:
+                cursor.parser.resume_canonical_section()
+                events.extend(
+                    cursor.parser.parse(lifecycle, baseline=True)
+                )
         cursor.offset = size
         cursor.buffer = b""
-        return self._parse_bytes(cursor.parser, data, baseline=True)
+        return events
+
+    def _find_latest_canonical_lifecycle(
+        self,
+        path: Path,
+        canonical_thread_id: str | None,
+        size: int,
+    ) -> dict[str, Any] | None:
+        """从文件尾向前寻找最近且属于规范区段的生命周期。"""
+
+        if not canonical_thread_id:
+            return None
+        candidate: dict[str, Any] | None = None
+        try:
+            lines = self._iter_lines_reverse(path, size)
+            for raw_line in lines:
+                record = self._decode_record(raw_line)
+                if record is None:
+                    continue
+                if candidate is None:
+                    if self._is_lifecycle_record(record):
+                        candidate = record
+                    continue
+                section_thread_id = self._session_meta_thread_id(record)
+                if section_thread_id is None:
+                    continue
+                if section_thread_id == canonical_thread_id:
+                    return candidate
+                candidate = None
+        except OSError:
+            return None
+        return None
+
+    def _iter_lines_reverse(
+        self,
+        path: Path,
+        size: int,
+    ) -> Iterator[bytes]:
+        """按从新到旧顺序迭代有界完整行，并跳过超长行。"""
+
+        lower_bound = max(0, size - self.bootstrap_lifecycle_scan_bytes)
+        position = size
+        fragment = b""
+        fragment_too_large = False
+        chunk_size = max(1, self.bootstrap_scan_chunk_bytes)
+        maximum_line = max(1, self.bootstrap_scan_max_line_bytes)
+        with path.open("rb") as stream:
+            while position > lower_bound:
+                start = max(lower_bound, position - chunk_size)
+                stream.seek(start)
+                chunk = stream.read(position - start)
+                position = start
+                parts = chunk.split(b"\n")
+                if len(parts) == 1:
+                    if not fragment_too_large:
+                        combined_size = len(parts[0]) + len(fragment)
+                        if combined_size <= maximum_line:
+                            fragment = parts[0] + fragment
+                        else:
+                            fragment = b""
+                            fragment_too_large = True
+                    continue
+
+                rightmost = parts[-1]
+                if (
+                    not fragment_too_large
+                    and len(rightmost) + len(fragment) <= maximum_line
+                ):
+                    complete_rightmost = rightmost + fragment
+                    if complete_rightmost.strip():
+                        yield complete_rightmost
+
+                fragment_too_large = False
+                fragment = b""
+                for raw_line in reversed(parts[1:-1]):
+                    if 0 < len(raw_line) <= maximum_line and raw_line.strip():
+                        yield raw_line
+
+                leftmost = parts[0]
+                if len(leftmost) <= maximum_line:
+                    fragment = leftmost
+                else:
+                    fragment_too_large = True
+
+        if (
+            lower_bound == 0
+            and not fragment_too_large
+            and fragment.strip()
+        ):
+            yield fragment
+
+    @staticmethod
+    def _decode_record(raw_line: bytes) -> dict[str, Any] | None:
+        """安全解码一条 JSONL 记录。"""
+
+        try:
+            record = json.loads(raw_line)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if not isinstance(record, dict):
+            return None
+        return _dict_record(record)
+
+    @staticmethod
+    def _is_lifecycle_record(record: dict[str, Any]) -> bool:
+        """判断记录是否为支持的任务生命周期消息。"""
+
+        if record.get("type") != "event_msg":
+            return False
+        payload = record.get("payload")
+        return bool(
+            isinstance(payload, dict)
+            and payload.get("type") in LIFECYCLE_MESSAGE_TYPES
+        )
+
+    @staticmethod
+    def _session_meta_thread_id(record: dict[str, Any]) -> str | None:
+        """读取会话区段元数据中的任务 ID。"""
+
+        if record.get("type") != "session_meta":
+            return None
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("id") or payload.get("session_id")
+        if value is None:
+            return None
+        result = str(value).strip()
+        return result or None
 
     def _read_increment(
         self,

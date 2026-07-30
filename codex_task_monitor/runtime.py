@@ -11,6 +11,7 @@ from codex_task_monitor.config.service import ConfigService
 from codex_task_monitor.models import (
     SourceEvent,
     SourceHealth,
+    SourceKind,
     TaskSnapshot,
     TaskStatus,
     WatchMode,
@@ -163,10 +164,13 @@ class RuntimeService:
         """读取 App Server 的全部非归档顶层任务。"""
 
         config = self.config_service.load()
-        recent_cutoff = datetime.now(UTC) - timedelta(
+        refreshed_at = datetime.now(UTC)
+        recent_cutoff = refreshed_at - timedelta(
             hours=config.codex.recent_completed_hours
         )
         cursor: str | None = None
+        app_server_thread_ids: set[str] = set()
+        listing_complete = False
         while True:
             result = await self.app_client.request(
                 "thread/list",
@@ -188,20 +192,58 @@ class RuntimeService:
             for raw_thread in rows:
                 if not isinstance(raw_thread, dict):
                     continue
+                raw_thread_id = raw_thread.get("id")
+                if isinstance(raw_thread_id, str) and raw_thread_id:
+                    app_server_thread_ids.add(raw_thread_id)
                 snapshot = map_thread(raw_thread)
+                self.aggregator.set_app_server_title(
+                    snapshot.thread_id,
+                    snapshot.title,
+                )
+                current = self.aggregator.get(snapshot.thread_id)
+                orphaned = False
+                if _should_mark_orphaned(
+                    raw_thread,
+                    current,
+                    refreshed_at,
+                    config.codex.orphaned_running_timeout_minutes,
+                ):
+                    inferred = self.aggregator.mark_orphaned_interrupted(
+                        snapshot.thread_id,
+                        completed_at=refreshed_at,
+                    )
+                    if inferred is not None:
+                        orphaned = True
+                        self.repository.deactivate_watch(snapshot.thread_id)
+                        self.aggregator.set_watch(
+                            snapshot.thread_id,
+                            monitored=False,
+                            mode=None,
+                        )
+                        await self._process_snapshot(
+                            inferred,
+                            allow_notifications=False,
+                        )
                 if not _should_include_snapshot(snapshot, recent_cutoff):
                     continue
-                current = self.aggregator.get(snapshot.thread_id)
-                if _needs_thread_details(snapshot, current):
+                if _needs_thread_details(snapshot):
                     snapshot = await self._read_active_thread(snapshot)
                 await self._accept_snapshot(
                     snapshot,
-                    allow_notifications=allow_notifications,
+                    allow_notifications=(
+                        allow_notifications and not orphaned
+                    ),
                 )
             next_cursor = result.get("nextCursor")
             cursor = next_cursor if isinstance(next_cursor, str) else None
             if not cursor:
+                listing_complete = True
                 break
+        if listing_complete:
+            self.aggregator.set_app_server_thread_ids(
+                app_server_thread_ids
+            )
+            self._deactivate_internal_watches()
         self._set_health("app_server", True, "")
         await self._publish_tasks()
         await self._publish_health()
@@ -216,8 +258,14 @@ class RuntimeService:
         accepted_events = [
             event for event in events if event.updated_at >= recent_cutoff
         ]
+        applied_events: list[tuple[SourceEvent, TaskSnapshot]] = []
         for event in accepted_events:
             snapshot = self.aggregator.apply(event)
+            applied_events.append((event, snapshot))
+        self._deactivate_internal_watches()
+        for event, snapshot in applied_events:
+            if self.aggregator.is_hidden(event.thread_id):
+                continue
             await self._process_snapshot(
                 snapshot,
                 allow_notifications=allow_notifications and not event.baseline,
@@ -249,7 +297,8 @@ class RuntimeService:
         if event is None:
             return
         snapshot = self.aggregator.apply(event)
-        await self._process_snapshot(snapshot, allow_notifications=True)
+        if not self.aggregator.is_hidden(event.thread_id):
+            await self._process_snapshot(snapshot, allow_notifications=True)
         await self._publish_tasks()
 
     async def start_watch(
@@ -351,6 +400,19 @@ class RuntimeService:
 
         self.list_tasks()
         return self.aggregator.get(thread_id)
+
+    def _deactivate_internal_watches(self) -> None:
+        """停用已确认内部续接节点的旧监控记录。"""
+
+        for thread_id in self.aggregator.hidden_thread_ids():
+            watch = self.repository.get_watch(thread_id)
+            if watch and watch.active:
+                self.repository.deactivate_watch(thread_id)
+            self.aggregator.set_watch(
+                thread_id,
+                monitored=False,
+                mode=None,
+            )
 
     async def _read_active_thread(self, fallback: TaskSnapshot) -> TaskSnapshot:
         """读取活动线程的 Turn 详情，失败时保留列表快照。"""
@@ -564,17 +626,34 @@ def _should_include_snapshot(
 
 def _needs_thread_details(
     listed: TaskSnapshot,
-    current: TaskSnapshot | None,
 ) -> bool:
-    """判断列表快照是否需要通过线程详情补充权威状态。"""
+    """仅为列表中明确活动的任务读取线程详情。"""
 
-    if listed.status in ACTIVE_STATUSES:
-        return True
-    return (
-        listed.status is TaskStatus.UNKNOWN
-        and current is not None
-        and current.status in ACTIVE_STATUSES
-    )
+    return listed.status in ACTIVE_STATUSES
+
+
+def _should_mark_orphaned(
+    raw_thread: dict[str, Any],
+    current: TaskSnapshot | None,
+    refreshed_at: datetime,
+    timeout_minutes: int,
+) -> bool:
+    """判断缺失终态的本地活动任务是否已超过孤儿阈值。"""
+
+    raw_status = raw_thread.get("status")
+    if (
+        not isinstance(raw_status, dict)
+        or raw_status.get("type") != "notLoaded"
+        or current is None
+    ):
+        return False
+    if (
+        current.source not in {SourceKind.SESSION, SourceKind.MERGED}
+        or current.status not in ACTIVE_STATUSES
+    ):
+        return False
+    cutoff = refreshed_at - timedelta(minutes=timeout_minutes)
+    return current.updated_at <= cutoff
 
 
 async def _wait_or_stop(stop_event: asyncio.Event, delay: float) -> None:

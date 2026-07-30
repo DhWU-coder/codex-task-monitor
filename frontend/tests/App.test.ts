@@ -2,6 +2,7 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import App from "../src/App.vue"
+import { THEME_STORAGE_KEY } from "../src/theme"
 import type {
   HealthResponse,
   PublicConfig,
@@ -40,6 +41,57 @@ class FakeEventSource {
     this.listeners.get(type)?.(
       new MessageEvent(type, { data: JSON.stringify(payload) }),
     )
+  }
+}
+
+class FakeStorage implements Storage {
+  private values = new Map<string, string>()
+
+  get length(): number {
+    return this.values.size
+  }
+
+  clear(): void {
+    this.values.clear()
+  }
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null
+  }
+
+  key(index: number): string | null {
+    return Array.from(this.values.keys())[index] ?? null
+  }
+
+  removeItem(key: string): void {
+    this.values.delete(key)
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, value)
+  }
+}
+
+class FakeMediaQueryList {
+  matches = false
+  listeners = new Set<(event: MediaQueryListEvent) => void>()
+
+  addEventListener(
+    type: string,
+    listener: (event: MediaQueryListEvent) => void,
+  ): void {
+    if (type === "change") {
+      this.listeners.add(listener)
+    }
+  }
+
+  removeEventListener(
+    type: string,
+    listener: (event: MediaQueryListEvent) => void,
+  ): void {
+    if (type === "change") {
+      this.listeners.delete(listener)
+    }
   }
 }
 
@@ -106,6 +158,7 @@ const publicConfig = {
 
 let wrappers: VueWrapper[] = []
 let source: FakeEventSource
+let themeMediaQuery: FakeMediaQueryList
 
 async function renderApp(): Promise<VueWrapper> {
   const wrapper = mount(App)
@@ -115,6 +168,17 @@ async function renderApp(): Promise<VueWrapper> {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: new FakeStorage(),
+  })
+  themeMediaQuery = new FakeMediaQueryList()
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn(() => themeMediaQuery as unknown as MediaQueryList),
+  })
+  delete document.documentElement.dataset.theme
+  document.documentElement.style.colorScheme = ""
   source = new FakeEventSource()
   apiMocks.getTasks.mockResolvedValue([
     baseTask,
@@ -197,5 +261,33 @@ describe("任务监控主页面", () => {
 
     expect(wrapper.text()).toContain("来自实时事件的新任务")
     expect(wrapper.text()).not.toContain("实现任务监控器")
+  })
+
+  it("使用太阳月亮按钮切换并保存主题", async () => {
+    const wrapper = await renderApp()
+    const toggle = wrapper.get("button[data-action='theme-toggle']")
+
+    expect(toggle.attributes("aria-label")).toBe("切换到深色主题")
+    expect(toggle.text()).toContain("☾")
+
+    await toggle.trigger("click")
+    expect(document.documentElement.dataset.theme).toBe("dark")
+    expect(toggle.attributes("aria-label")).toBe("切换到浅色主题")
+    expect(toggle.text()).toContain("☀")
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark")
+
+    await toggle.trigger("click")
+    expect(document.documentElement.dataset.theme).toBe("light")
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("light")
+  })
+
+  it("卸载页面时停止监听系统主题", async () => {
+    const wrapper = await renderApp()
+    expect(themeMediaQuery.listeners.size).toBe(1)
+
+    wrapper.unmount()
+
+    expect(themeMediaQuery.listeners.size).toBe(0)
+    wrappers = wrappers.filter((item) => item !== wrapper)
   })
 })

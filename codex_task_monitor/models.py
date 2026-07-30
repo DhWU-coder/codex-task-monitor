@@ -126,6 +126,7 @@ class SourceEvent(DomainModel):
 
     source: SourceKind
     thread_id: str
+    parent_thread_id: str | None = None
     turn_id: str | None = None
     title: str | None = None
     status: TaskStatus | None = None

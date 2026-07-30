@@ -21,6 +21,7 @@ const config: PublicConfig = {
     refresh_interval_seconds: 2,
     reconcile_interval_seconds: 30,
     recent_completed_hours: 24,
+    orphaned_running_timeout_minutes: 60,
   },
   feishu: {
     app_id: "cli_test",
@@ -37,6 +38,15 @@ const config: PublicConfig = {
     notify_interrupted: true,
     notify_waiting_input: true,
     notify_waiting_approval: true,
+  },
+}
+
+const emailConfig: PublicConfig = {
+  ...config,
+  feishu: {
+    ...config.feishu,
+    receive_id: "owner@company.com",
+    receive_id_type: "email",
   },
 }
 
@@ -86,6 +96,28 @@ describe("设置面板", () => {
     expect(wrapper.text()).toContain("codex-task-monitor restart")
   })
 
+  it("显示并保存孤儿任务超时", async () => {
+    const wrapper = mount(SettingsPanel, {
+      props: { initialConfig: config },
+    })
+    const timeoutInput = wrapper.get(
+      "input[aria-label='孤儿任务超时']",
+    )
+    expect((timeoutInput.element as HTMLInputElement).value).toBe("60")
+
+    await timeoutInput.setValue("90")
+    await wrapper.get("form").trigger("submit")
+    await flushPromises()
+
+    expect(apiMocks.updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codex: expect.objectContaining({
+          orphaned_running_timeout_minutes: 90,
+        }),
+      }),
+    )
+  })
+
   it("空密钥默认保留，只有勾选后显式清除", async () => {
     const wrapper = mount(SettingsPanel, {
       props: { initialConfig: config },
@@ -132,5 +164,43 @@ describe("设置面板", () => {
 
     expect(wrapper.get("[role='alert']").text()).toContain("端口无效")
     expect(wrapper.emitted("close")).toBeUndefined()
+  })
+
+  it("推荐使用企业邮箱并展示邮箱输入提示", () => {
+    const wrapper = mount(SettingsPanel, {
+      props: { initialConfig: emailConfig },
+    })
+
+    expect(wrapper.text()).toContain("推荐使用企业邮箱")
+    const recipient = wrapper.get("input[aria-label='飞书企业邮箱']")
+    expect(recipient.attributes("placeholder")).toBe("name@company.com")
+    expect((recipient.element as HTMLInputElement).value).toBe(
+      "owner@company.com",
+    )
+  })
+
+  it("切换接收人类型后更新字段提示并保持保存结构", async () => {
+    const wrapper = mount(SettingsPanel, {
+      props: { initialConfig: emailConfig },
+    })
+
+    await wrapper
+      .get("select[aria-label='飞书接收人 ID 类型']")
+      .setValue("open_id")
+    const recipient = wrapper.get("input[aria-label='飞书 Open ID']")
+    expect(recipient.attributes("placeholder")).toBe("ou_xxxxxxxxxxxxxxxx")
+    await recipient.setValue("ou_changed")
+
+    await wrapper.get("form").trigger("submit")
+    await flushPromises()
+
+    expect(apiMocks.updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feishu: expect.objectContaining({
+          receive_id: "ou_changed",
+          receive_id_type: "open_id",
+        }),
+      }),
+    )
   })
 })

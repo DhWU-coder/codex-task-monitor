@@ -25,6 +25,11 @@ class CodexConfig(StrictConfigModel):
     refresh_interval_seconds: float = Field(default=2, gt=0, le=60)
     reconcile_interval_seconds: float = Field(default=30, gt=0, le=3600)
     recent_completed_hours: int = Field(default=24, ge=1, le=720)
+    orphaned_running_timeout_minutes: int = Field(
+        default=60,
+        ge=5,
+        le=1440,
+    )
 
 
 class FeishuConfig(StrictConfigModel):
@@ -33,7 +38,7 @@ class FeishuConfig(StrictConfigModel):
     app_id: str = ""
     app_secret: str = ""
     receive_id: str = ""
-    receive_id_type: Literal["open_id", "union_id", "user_id", "email"] = "open_id"
+    receive_id_type: Literal["open_id", "union_id", "user_id", "email"] = "email"
 
 
 class NotificationConfig(StrictConfigModel):

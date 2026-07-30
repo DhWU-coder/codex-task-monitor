@@ -91,11 +91,7 @@ class FakeAppClient:
 
 
 class NotLoadedAppClient(FakeAppClient):
-    """模拟列表未加载、详情包含权威 Turn 状态的 App Server。"""
-
-    def __init__(self, *, fail_read: bool = False) -> None:
-        super().__init__()
-        self.fail_read = fail_read
+    """模拟列表未加载、详情包含滞后 Turn 状态的 App Server。"""
 
     async def request(
         self,
@@ -122,8 +118,6 @@ class NotLoadedAppClient(FakeAppClient):
                 "nextCursor": None,
             }
         if method == "thread/read":
-            if self.fail_read:
-                raise RuntimeError("模拟详情读取失败")
             return {
                 "thread": {
                     "id": "thread-stale",
@@ -145,6 +139,64 @@ class NotLoadedAppClient(FakeAppClient):
                     ],
                 }
             }
+        return {}
+
+
+def _app_thread(
+    thread_id: str,
+    name: str,
+    *,
+    updated_at: int,
+    status_type: str = "idle",
+) -> dict[str, Any]:
+    """构造运行时测试需要的最小 App Server 任务。"""
+
+    return {
+        "id": thread_id,
+        "name": name,
+        "preview": "",
+        "cwd": "/work/lineage-project",
+        "source": "appServer",
+        "status": {"type": status_type},
+        "createdAt": updated_at,
+        "updatedAt": updated_at,
+        "turns": [],
+    }
+
+
+class SequencedListAppClient(FakeAppClient):
+    """按调用顺序返回预设任务列表响应。"""
+
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.responses = list(responses)
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/list":
+            return self.responses.pop(0)
+        return {}
+
+
+class StaticThreadListAppClient(FakeAppClient):
+    """始终返回同一组 App Server 任务。"""
+
+    def __init__(self, threads: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.threads = threads
+
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.requests.append((method, params))
+        if method == "thread/list":
+            return {"data": self.threads, "nextCursor": None}
         return {}
 
 
@@ -403,7 +455,7 @@ async def test_stale_session_running_event_is_not_shown(
 
 
 @pytest.mark.asyncio
-async def test_not_loaded_thread_reconciles_running_to_interrupted(
+async def test_not_loaded_thread_preserves_session_running_state(
     tmp_path: Path,
 ) -> None:
     running = SourceEvent(
@@ -426,9 +478,114 @@ async def test_not_loaded_thread_reconciles_running_to_interrupted(
     await runtime.refresh_once()
 
     methods = [method for method, _ in app_client.requests]
-    assert methods == ["thread/list", "thread/read"]
-    assert runtime.get_task("thread-stale").status is TaskStatus.INTERRUPTED
+    assert methods == ["thread/list"]
+    assert runtime.get_task("thread-stale").status is TaskStatus.RUNNING
     assert notifier.messages == []
+
+
+@pytest.mark.asyncio
+async def test_orphaned_not_loaded_running_is_interrupted_without_notification(
+    tmp_path: Path,
+) -> None:
+    running = SourceEvent(
+        source=SourceKind.SESSION,
+        thread_id="thread-stale",
+        turn_id="turn-stale",
+        title="你有pdf工具么",
+        status=TaskStatus.RUNNING,
+        updated_at=datetime.now(UTC) - timedelta(hours=2),
+    )
+    app_client = NotLoadedAppClient()
+    runtime, notifier, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running]]),
+        app_client=app_client,
+    )
+    await runtime.observe_once()
+    await runtime.start_watch("thread-stale", WatchMode.PERSISTENT)
+
+    await runtime.refresh_once()
+
+    methods = [method for method, _ in app_client.requests]
+    assert methods == ["thread/list"]
+    assert runtime.get_task("thread-stale").status is TaskStatus.INTERRUPTED
+    watch = runtime.repository.get_watch("thread-stale")
+    assert watch is not None
+    assert watch.active is False
+    assert notifier.messages == []
+
+
+@pytest.mark.asyncio
+async def test_orphaned_task_resumes_when_session_appends_event(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(UTC)
+    running = SourceEvent(
+        source=SourceKind.SESSION,
+        thread_id="thread-stale",
+        turn_id="turn-stale",
+        status=TaskStatus.RUNNING,
+        updated_at=now - timedelta(hours=2),
+    )
+    resumed = SourceEvent(
+        source=SourceKind.SESSION,
+        thread_id="thread-stale",
+        turn_id="turn-stale",
+        status=None,
+        latest_summary="任务继续输出。",
+        updated_at=now,
+    )
+    runtime, _, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running], [resumed]]),
+        app_client=NotLoadedAppClient(),
+    )
+    await runtime.observe_once()
+    await runtime.refresh_once()
+    assert runtime.get_task("thread-stale").status is TaskStatus.INTERRUPTED
+
+    await runtime.observe_once()
+
+    task = runtime.get_task("thread-stale")
+    assert task is not None
+    assert task.status is TaskStatus.RUNNING
+    assert task.latest_summary == "任务继续输出。"
+
+
+@pytest.mark.asyncio
+async def test_orphaned_task_accepts_later_real_completion(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(UTC)
+    running = SourceEvent(
+        source=SourceKind.SESSION,
+        thread_id="thread-stale",
+        turn_id="turn-stale",
+        status=TaskStatus.RUNNING,
+        updated_at=now - timedelta(hours=2),
+    )
+    completed = SourceEvent(
+        source=SourceKind.SESSION,
+        thread_id="thread-stale",
+        turn_id="turn-stale",
+        status=TaskStatus.COMPLETED,
+        completed_at=now,
+        updated_at=now,
+        authoritative=True,
+    )
+    runtime, _, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running], [completed]]),
+        app_client=NotLoadedAppClient(),
+    )
+    await runtime.observe_once()
+    await runtime.refresh_once()
+
+    await runtime.observe_once()
+
+    task = runtime.get_task("thread-stale")
+    assert task is not None
+    assert task.status is TaskStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -446,27 +603,301 @@ async def test_not_loaded_thread_without_active_snapshot_skips_details(
 
 
 @pytest.mark.asyncio
-async def test_not_loaded_thread_keeps_running_when_detail_read_fails(
+async def test_visible_set_includes_rows_outside_recent_window(
     tmp_path: Path,
 ) -> None:
-    running = SourceEvent(
-        source=SourceKind.SESSION,
-        thread_id="thread-stale",
-        turn_id="turn-stale",
-        title="你有pdf工具么",
-        status=TaskStatus.RUNNING,
-        updated_at=datetime.now(UTC),
+    now = int(datetime.now(UTC).timestamp())
+    app_client = SequencedListAppClient(
+        [
+            {
+                "data": [
+                    _app_thread(
+                        "thread-a",
+                        "父任务",
+                        updated_at=now - 172800,
+                    ),
+                    _app_thread("thread-b", "子任务", updated_at=now),
+                ],
+                "nextCursor": None,
+            }
+        ]
     )
-    app_client = NotLoadedAppClient(fail_read=True)
+    observer = FakeObserver(
+        [
+            [
+                SourceEvent(
+                    source=SourceKind.SESSION,
+                    thread_id="thread-a",
+                    title="父任务本地消息",
+                    status=TaskStatus.RUNNING,
+                    updated_at=datetime.now(UTC),
+                ),
+                SourceEvent(
+                    source=SourceKind.SESSION,
+                    thread_id="thread-b",
+                    parent_thread_id="thread-a",
+                    title="子任务本地消息",
+                    status=TaskStatus.RUNNING,
+                    updated_at=datetime.now(UTC),
+                ),
+            ]
+        ]
+    )
     runtime, _, _ = _runtime(
         tmp_path,
-        observer=FakeObserver([[running]]),
+        observer=observer,
         app_client=app_client,
     )
-    await runtime.observe_once()
 
     await runtime.refresh_once()
+    await runtime.observe_once()
 
-    methods = [method for method, _ in app_client.requests]
-    assert methods == ["thread/list", "thread/read"]
-    assert runtime.get_task("thread-stale").status is TaskStatus.RUNNING
+    assert {task.thread_id for task in runtime.list_tasks()} == {
+        "thread-a",
+        "thread-b",
+    }
+
+
+@pytest.mark.asyncio
+async def test_incomplete_thread_list_preserves_previous_visible_set(
+    tmp_path: Path,
+) -> None:
+    now = int(datetime.now(UTC).timestamp())
+    thread_a = _app_thread("thread-a", "父任务", updated_at=now)
+    thread_b = _app_thread("thread-b", "子任务", updated_at=now)
+    app_client = SequencedListAppClient(
+        [
+            {"data": [thread_a, thread_b], "nextCursor": None},
+            {"data": [thread_b], "nextCursor": "page-2"},
+            {"unexpected": []},
+        ]
+    )
+    observer = FakeObserver(
+        [
+            [
+                SourceEvent(
+                    source=SourceKind.SESSION,
+                    thread_id="thread-b",
+                    parent_thread_id="thread-a",
+                    status=TaskStatus.RUNNING,
+                    updated_at=datetime.now(UTC),
+                )
+            ]
+        ]
+    )
+    runtime, _, _ = _runtime(
+        tmp_path,
+        observer=observer,
+        app_client=app_client,
+    )
+
+    await runtime.refresh_once()
+    await runtime.observe_once()
+    await runtime.refresh_once()
+
+    assert {task.thread_id for task in runtime.list_tasks()} == {
+        "thread-a",
+        "thread-b",
+    }
+
+
+@pytest.mark.asyncio
+async def test_internal_continuation_keeps_only_named_visible_leaf(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(UTC)
+    app_client = StaticThreadListAppClient(
+        [
+            _app_thread(
+                "thread-c",
+                "侧栏任务名称",
+                updated_at=int(now.timestamp()),
+            )
+        ]
+    )
+    events = [
+        SourceEvent(
+            source=SourceKind.SESSION,
+            thread_id="thread-a",
+            title="祖先消息",
+            status=TaskStatus.COMPLETED,
+            authoritative=True,
+            updated_at=now,
+        ),
+        SourceEvent(
+            source=SourceKind.SESSION,
+            thread_id="thread-b",
+            parent_thread_id="thread-a",
+            title="中间消息",
+            status=TaskStatus.RUNNING,
+            updated_at=now,
+        ),
+        SourceEvent(
+            source=SourceKind.SESSION,
+            thread_id="thread-c",
+            parent_thread_id="thread-b",
+            title="第一条用户消息",
+            status=TaskStatus.RUNNING,
+            updated_at=now,
+        ),
+    ]
+    runtime, notifier, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([events]),
+        app_client=app_client,
+    )
+    runtime.repository.save_watch(
+        thread_id="thread-a",
+        mode=WatchMode.PERSISTENT,
+        baseline_status=TaskStatus.RUNNING,
+    )
+
+    await runtime.refresh_once()
+    await runtime.observe_once()
+
+    tasks = runtime.list_tasks()
+    assert [task.thread_id for task in tasks] == ["thread-c"]
+    assert tasks[0].title == "侧栏任务名称"
+    assert runtime.get_task("thread-a") is None
+    assert runtime.get_task("thread-b") is None
+    watch = runtime.repository.get_watch("thread-a")
+    assert watch is not None
+    assert watch.active is False
+    assert notifier.messages == []
+
+
+@pytest.mark.asyncio
+async def test_user_fork_keeps_both_app_server_tasks(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(UTC)
+    app_client = StaticThreadListAppClient(
+        [
+            _app_thread(
+                "thread-a",
+                "任务 A",
+                updated_at=int(now.timestamp()),
+            ),
+            _app_thread(
+                "thread-b",
+                "任务 B",
+                updated_at=int(now.timestamp()),
+            ),
+        ]
+    )
+    observer = FakeObserver(
+        [
+            [
+                SourceEvent(
+                    source=SourceKind.SESSION,
+                    thread_id="thread-b",
+                    parent_thread_id="thread-a",
+                    title="B 的第一条消息",
+                    status=TaskStatus.RUNNING,
+                    updated_at=now,
+                )
+            ]
+        ]
+    )
+    runtime, _, _ = _runtime(
+        tmp_path,
+        observer=observer,
+        app_client=app_client,
+    )
+
+    await runtime.refresh_once()
+    await runtime.observe_once()
+
+    assert {
+        task.thread_id: task.title for task in runtime.list_tasks()
+    } == {
+        "thread-a": "任务 A",
+        "thread-b": "任务 B",
+    }
+
+
+@pytest.mark.asyncio
+async def test_three_running_named_tasks_use_app_server_titles(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(UTC)
+    app_client = StaticThreadListAppClient(
+        [
+            _app_thread(
+                "thread-monitor",
+                "codex任务监控器",
+                updated_at=int(now.timestamp()),
+                status_type="notLoaded",
+            ),
+            _app_thread(
+                "thread-feishu",
+                "飞书channel-Web Chat",
+                updated_at=int(now.timestamp()),
+                status_type="notLoaded",
+            ),
+            _app_thread(
+                "thread-frontend",
+                "生成前端",
+                updated_at=int(
+                    (now - timedelta(hours=48)).timestamp()
+                ),
+                status_type="notLoaded",
+            ),
+        ]
+    )
+    observer = FakeObserver(
+        [
+            [
+                SourceEvent(
+                    source=SourceKind.SESSION,
+                    thread_id="thread-monitor",
+                    title="监控器的第一条用户消息",
+                    status=TaskStatus.RUNNING,
+                    updated_at=now,
+                ),
+                SourceEvent(
+                    source=SourceKind.SESSION,
+                    thread_id="thread-feishu",
+                    title="飞书任务的第一条用户消息",
+                    status=TaskStatus.RUNNING,
+                    updated_at=now,
+                ),
+                SourceEvent(
+                    source=SourceKind.SESSION,
+                    thread_id="thread-frontend",
+                    title="前端任务的第一条用户消息",
+                    status=TaskStatus.RUNNING,
+                    updated_at=now,
+                ),
+            ]
+        ]
+    )
+    runtime, _, _ = _runtime(
+        tmp_path,
+        observer=observer,
+        app_client=app_client,
+    )
+
+    await runtime.refresh_once()
+    await runtime.observe_once()
+
+    tasks = {task.thread_id: task for task in runtime.list_tasks()}
+    assert set(tasks) == {
+        "thread-monitor",
+        "thread-feishu",
+        "thread-frontend",
+    }
+    assert {
+        thread_id: task.status for thread_id, task in tasks.items()
+    } == {
+        "thread-monitor": TaskStatus.RUNNING,
+        "thread-feishu": TaskStatus.RUNNING,
+        "thread-frontend": TaskStatus.RUNNING,
+    }
+    assert {
+        thread_id: task.title for thread_id, task in tasks.items()
+    } == {
+        "thread-monitor": "codex任务监控器",
+        "thread-feishu": "飞书channel-Web Chat",
+        "thread-frontend": "生成前端",
+    }

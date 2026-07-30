@@ -19,6 +19,36 @@ def test_default_port_is_6664(config_path: Path) -> None:
     assert service.load().server.port == 6664
 
 
+def test_default_feishu_recipient_type_is_email(config_path: Path) -> None:
+    service = _service(config_path)
+
+    config = service.create_default()
+
+    assert config.feishu.receive_id_type == "email"
+
+
+def test_default_orphaned_running_timeout_is_60_minutes(
+    config_path: Path,
+) -> None:
+    service = _service(config_path)
+
+    config = service.create_default()
+
+    assert config.codex.orphaned_running_timeout_minutes == 60
+
+
+def test_rejects_orphaned_running_timeout_below_five_minutes(
+    config_path: Path,
+) -> None:
+    service = _service(config_path)
+    service.create_default()
+
+    with pytest.raises(ValidationError):
+        service.update_from_public(
+            {"codex": {"orphaned_running_timeout_minutes": 4}}
+        )
+
+
 def test_masked_config_never_exposes_app_secret(config_path: Path) -> None:
     service = _service(config_path)
     service.create_default()
@@ -37,6 +67,7 @@ def test_masked_config_never_exposes_app_secret(config_path: Path) -> None:
 
     assert masked["feishu"]["app_secret"] == ""
     assert masked["feishu"]["app_secret_configured"] is True
+    assert masked["feishu"]["receive_id_type"] == "open_id"
     assert "secret-test" not in repr(masked)
 
 

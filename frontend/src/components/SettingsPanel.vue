@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from "vue"
+import { computed, reactive, ref } from "vue"
 
 import { sendTestNotification, updateConfig } from "../api"
 import type { PublicConfig } from "../types"
@@ -24,6 +24,36 @@ const form = reactive({
   },
   notifications: { ...props.initialConfig.notifications },
 })
+
+const recipientFields = {
+  email: {
+    label: "飞书企业邮箱",
+    placeholder: "name@company.com",
+    help: "填写目标用户在当前飞书租户中的企业邮箱。",
+  },
+  open_id: {
+    label: "飞书 Open ID",
+    placeholder: "ou_xxxxxxxxxxxxxxxx",
+    help: "Open ID 与当前飞书自建应用绑定，通常以 ou_ 开头。",
+  },
+  union_id: {
+    label: "飞书 Union ID",
+    placeholder: "on_xxxxxxxxxxxxxxxx",
+    help: "填写目标用户在应用开发商范围内的 Union ID。",
+  },
+  user_id: {
+    label: "飞书 User ID",
+    placeholder: "user_id",
+    help: "填写目标用户在当前飞书租户中的 User ID。",
+  },
+} satisfies Record<
+  PublicConfig["feishu"]["receive_id_type"],
+  { label: string; placeholder: string; help: string }
+>
+
+const recipientField = computed(
+  () => recipientFields[form.feishu.receive_id_type],
+)
 
 const clearSecret = ref(false)
 const saving = ref(false)
@@ -52,6 +82,9 @@ async function save(): Promise<void> {
         ),
         recent_completed_hours: Number(
           form.codex.recent_completed_hours,
+        ),
+        orphaned_running_timeout_minutes: Number(
+          form.codex.orphaned_running_timeout_minutes,
         ),
       },
       feishu: {
@@ -181,11 +214,28 @@ async function testNotification(): Promise<void> {
                 required
               />
             </label>
+            <label>
+              <span>孤儿任务超时（分钟）</span>
+              <input
+                v-model.number="form.codex.orphaned_running_timeout_minutes"
+                aria-label="孤儿任务超时"
+                type="number"
+                min="5"
+                max="1440"
+                required
+              />
+              <small class="field-help">
+                notLoaded 且超过此时长无新记录的运行任务将按中断处理。
+              </small>
+            </label>
           </div>
         </fieldset>
 
         <fieldset class="settings-section">
           <legend>飞书自建应用</legend>
+          <p class="settings-description">
+            推荐使用企业邮箱：选择 email，并填写目标用户在当前飞书租户中的企业邮箱。
+          </p>
           <div class="form-grid">
             <label>
               <span>App ID</span>
@@ -211,14 +261,6 @@ async function testNotification(): Promise<void> {
               />
             </label>
             <label>
-              <span>接收人 ID</span>
-              <input
-                v-model="form.feishu.receive_id"
-                aria-label="飞书接收人 ID"
-                autocomplete="off"
-              />
-            </label>
-            <label>
               <span>接收人 ID 类型</span>
               <select
                 v-model="form.feishu.receive_id_type"
@@ -229,6 +271,16 @@ async function testNotification(): Promise<void> {
                 <option value="user_id">user_id</option>
                 <option value="email">email</option>
               </select>
+            </label>
+            <label>
+              <span>{{ recipientField.label }}</span>
+              <input
+                v-model="form.feishu.receive_id"
+                :aria-label="recipientField.label"
+                autocomplete="off"
+                :placeholder="recipientField.placeholder"
+              />
+              <small class="field-help">{{ recipientField.help }}</small>
             </label>
           </div>
           <label class="checkbox-row danger-option">

@@ -1,5 +1,6 @@
 """多个 Codex 数据源的任务状态聚合。"""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from codex_task_monitor.models import (
@@ -15,6 +16,12 @@ TERMINAL_STATUSES = {
     TaskStatus.FAILED,
     TaskStatus.INTERRUPTED,
 }
+ACTIVE_STATUSES = {
+    TaskStatus.RUNNING,
+    TaskStatus.WAITING_APPROVAL,
+    TaskStatus.WAITING_INPUT,
+}
+MIN_STARTED_AT = datetime.min.replace(tzinfo=UTC)
 
 
 class TaskAggregator:
@@ -22,22 +29,120 @@ class TaskAggregator:
 
     def __init__(self) -> None:
         self._tasks: dict[str, TaskSnapshot] = {}
+        self._app_server_titles: dict[str, str] = {}
+        self._parent_thread_ids: dict[str, str] = {}
+        self._app_server_thread_ids: set[str] = set()
+        self._internal_thread_ids: set[str] = set()
+        self._orphaned_thread_ids: set[str] = set()
 
     def apply(self, event: SourceEvent) -> TaskSnapshot:
         """合并一条标准来源事件。"""
 
+        if (
+            event.parent_thread_id
+            and event.parent_thread_id != event.thread_id
+        ):
+            self._parent_thread_ids[event.thread_id] = event.parent_thread_id
+            self._reconcile_internal_threads()
         current = self._tasks.get(event.thread_id)
+        if (
+            current is not None
+            and event.source is SourceKind.SESSION
+            and event.thread_id in self._orphaned_thread_ids
+        ):
+            self._orphaned_thread_ids.discard(event.thread_id)
+            current = current.model_copy(
+                update={
+                    "status": TaskStatus.RUNNING,
+                    "completed_at": None,
+                    "waiting_reason": "",
+                    "request_id": None,
+                }
+            )
         snapshot = (
             self._new_snapshot(event)
             if current is None
             else self._merge(current, event)
         )
+        authoritative_title = self._app_server_titles.get(event.thread_id)
+        if authoritative_title and snapshot.title != authoritative_title:
+            snapshot = snapshot.model_copy(
+                update={"title": authoritative_title}
+            )
         self._tasks[event.thread_id] = snapshot
         return snapshot
+
+    def set_app_server_thread_ids(self, thread_ids: set[str]) -> None:
+        """使用一次完整 App Server 列表更新侧栏可见任务。"""
+
+        self._app_server_thread_ids = {
+            thread_id for thread_id in thread_ids if thread_id
+        }
+        self._reconcile_internal_threads()
+
+    def set_app_server_title(
+        self,
+        thread_id: str,
+        title: str | None,
+    ) -> None:
+        """注册 App Server 提供的任务名称。"""
+
+        normalized_thread_id = thread_id.strip()
+        normalized_title = title.strip() if title else ""
+        if not normalized_thread_id or not normalized_title:
+            return
+        self._app_server_titles[normalized_thread_id] = normalized_title
+        current = self._tasks.get(normalized_thread_id)
+        if current is not None and current.title != normalized_title:
+            self._tasks[normalized_thread_id] = current.model_copy(
+                update={"title": normalized_title}
+            )
+
+    def mark_orphaned_interrupted(
+        self,
+        thread_id: str,
+        *,
+        completed_at: datetime,
+    ) -> TaskSnapshot | None:
+        """把缺失终态且超时的活动任务标记为推断中断。"""
+
+        current = self._tasks.get(thread_id)
+        if current is None or current.status not in ACTIVE_STATUSES:
+            return None
+        self._orphaned_thread_ids.add(thread_id)
+        updated = current.model_copy(
+            update={
+                "status": TaskStatus.INTERRUPTED,
+                "completed_at": completed_at,
+                "updated_at": max(current.updated_at, completed_at),
+                "waiting_reason": "",
+                "request_id": None,
+            }
+        )
+        self._tasks[thread_id] = updated
+        return updated
+
+    def hidden_thread_ids(self) -> set[str]:
+        """返回当前已确认且不在侧栏中的内部节点。"""
+
+        return {
+            thread_id
+            for thread_id in self._internal_thread_ids
+            if thread_id not in self._app_server_thread_ids
+        }
+
+    def is_hidden(self, thread_id: str) -> bool:
+        """判断任务是否为当前不可见的内部续接节点。"""
+
+        return (
+            thread_id in self._internal_thread_ids
+            and thread_id not in self._app_server_thread_ids
+        )
 
     def apply_snapshot(self, snapshot: TaskSnapshot) -> TaskSnapshot:
         """合并一个已经映射的 App Server 快照。"""
 
+        self.set_app_server_title(snapshot.thread_id, snapshot.title)
         event = SourceEvent(
             source=snapshot.source,
             thread_id=snapshot.thread_id,
@@ -82,16 +187,46 @@ class TaskAggregator:
     def get(self, thread_id: str) -> TaskSnapshot | None:
         """按线程 ID 返回任务。"""
 
+        if self.is_hidden(thread_id):
+            return None
         return self._tasks.get(thread_id)
 
     def list_tasks(self) -> list[TaskSnapshot]:
-        """按最近更新时间倒序返回任务。"""
+        """按开始时间倒序和任务 ID 升序稳定返回任务。"""
 
+        tasks = sorted(
+            (
+                task
+                for task in self._tasks.values()
+                if not self.is_hidden(task.thread_id)
+            ),
+            key=lambda task: task.thread_id,
+        )
         return sorted(
-            self._tasks.values(),
-            key=lambda task: task.updated_at,
+            tasks,
+            key=lambda task: task.started_at or MIN_STARTED_AT,
             reverse=True,
         )
+
+    def _reconcile_internal_threads(self) -> None:
+        """从侧栏可见任务向上确认不可见的内部续接祖先。"""
+
+        for thread_id in self._app_server_thread_ids:
+            current_thread_id = thread_id
+            visited = {current_thread_id}
+            while True:
+                parent_thread_id = self._parent_thread_ids.get(
+                    current_thread_id
+                )
+                if (
+                    not parent_thread_id
+                    or parent_thread_id in visited
+                ):
+                    break
+                visited.add(parent_thread_id)
+                if parent_thread_id not in self._app_server_thread_ids:
+                    self._internal_thread_ids.add(parent_thread_id)
+                current_thread_id = parent_thread_id
 
     @staticmethod
     def _new_snapshot(event: SourceEvent) -> TaskSnapshot:

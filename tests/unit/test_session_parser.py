@@ -28,6 +28,125 @@ def test_session_metadata_establishes_thread_and_cwd() -> None:
     assert events[0].baseline is True
 
 
+def test_forked_from_id_is_attached_to_all_session_events() -> None:
+    parser = _parser()
+
+    metadata_events = parser.parse(
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": "thread-child",
+                "forked_from_id": "thread-parent",
+            },
+        }
+    )
+    running_events = parser.parse(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "task_started",
+                "turn_id": "turn-child",
+            },
+        }
+    )
+
+    assert metadata_events[0].parent_thread_id == "thread-parent"
+    assert running_events[0].parent_thread_id == "thread-parent"
+
+
+def test_replayed_ancestor_records_do_not_replace_canonical_thread() -> None:
+    parser = _parser()
+    canonical = parser.parse(
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": "thread-child",
+                "forked_from_id": "thread-parent",
+                "cwd": "/work/child",
+            },
+        }
+    )
+    parser.parse(
+        {
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "子任务标题"},
+        }
+    )
+
+    replayed_metadata = parser.parse(
+        {
+            "type": "session_meta",
+            "payload": {"id": "thread-parent", "cwd": "/work/parent"},
+        }
+    )
+    replayed_running = parser.parse(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "task_started",
+                "turn_id": "turn-parent",
+            },
+        }
+    )
+    parser.resume_canonical_section()
+    child_running = parser.parse(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "task_started",
+                "turn_id": "turn-child",
+            },
+        }
+    )
+
+    assert canonical[0].thread_id == "thread-child"
+    assert canonical[0].parent_thread_id == "thread-parent"
+    assert replayed_metadata == []
+    assert replayed_running == []
+    assert child_running[0].thread_id == "thread-child"
+    assert child_running[0].turn_id == "turn-child"
+    assert child_running[0].title == "子任务标题"
+    assert child_running[0].cwd == "/work/child"
+
+
+def test_replayed_ancestor_user_message_does_not_set_canonical_title() -> None:
+    parser = _parser()
+    parser.parse(
+        {
+            "type": "session_meta",
+            "payload": {"id": "thread-child"},
+        }
+    )
+    parser.parse(
+        {
+            "type": "session_meta",
+            "payload": {"id": "thread-parent"},
+        }
+    )
+    parser.parse(
+        {
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "父任务标题"},
+        }
+    )
+
+    parser.resume_canonical_section()
+    parser.parse(
+        {
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "子任务标题"},
+        }
+    )
+    events = parser.parse(
+        {
+            "type": "event_msg",
+            "payload": {"type": "task_started", "turn_id": "turn-child"},
+        }
+    )
+
+    assert events[0].title == "子任务标题"
+
+
 def test_task_started_maps_running_event() -> None:
     parser = _parser()
     parser.parse(

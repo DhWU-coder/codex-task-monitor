@@ -16,6 +16,12 @@ import SettingsPanel from "./components/SettingsPanel.vue"
 import StatusBar from "./components/StatusBar.vue"
 import TaskCard from "./components/TaskCard.vue"
 import TaskDetails from "./components/TaskDetails.vue"
+import {
+  initializeTheme,
+  setThemePreference,
+  watchSystemTheme,
+  type Theme,
+} from "./theme"
 import type {
   PublicConfig,
   SourceHealth,
@@ -32,6 +38,7 @@ const settingsOpen = ref(false)
 const loading = ref(true)
 const errorMessage = ref("")
 const busyTasks = ref(new Set<string>())
+const theme = ref<Theme>(initializeTheme())
 const liveStatus = ref<"connecting" | "connected" | "disconnected">(
   "connecting",
 )
@@ -40,6 +47,7 @@ let eventSource: EventSource | null = null
 let reconnectTimer: number | null = null
 let reconnectAttempt = 0
 let mounted = true
+let stopThemeWatch: (() => void) | null = null
 
 const activeStatuses = new Set([
   "running",
@@ -207,13 +215,25 @@ function setBusy(threadId: string, busy: boolean): void {
   busyTasks.value = next
 }
 
+function toggleTheme(): void {
+  const nextTheme = theme.value === "light" ? "dark" : "light"
+  stopThemeWatch?.()
+  stopThemeWatch = null
+  setThemePreference(nextTheme)
+  theme.value = nextTheme
+}
+
 onMounted(async () => {
+  stopThemeWatch = watchSystemTheme((nextTheme) => {
+    theme.value = nextTheme
+  })
   await loadInitial()
   connectEvents()
 })
 
 onUnmounted(() => {
   mounted = false
+  stopThemeWatch?.()
   eventSource?.close()
   if (reconnectTimer !== null) {
     window.clearTimeout(reconnectTimer)
@@ -231,13 +251,30 @@ onUnmounted(() => {
           聚合本机 Codex 任务，在需要处理或任务结束时通知你。
         </p>
       </div>
-      <button
-        type="button"
-        class="button button-secondary settings-button"
-        @click="settingsOpen = true"
-      >
-        设置
-      </button>
+      <div class="header-actions">
+        <button
+          type="button"
+          class="button button-secondary theme-toggle"
+          data-action="theme-toggle"
+          :aria-label="
+            theme === 'light' ? '切换到深色主题' : '切换到浅色主题'
+          "
+          :aria-pressed="theme === 'dark'"
+          :title="
+            theme === 'light' ? '切换到深色主题' : '切换到浅色主题'
+          "
+          @click="toggleTheme"
+        >
+          <span aria-hidden="true">{{ theme === "light" ? "☾" : "☀" }}</span>
+        </button>
+        <button
+          type="button"
+          class="button button-secondary settings-button"
+          @click="settingsOpen = true"
+        >
+          设置
+        </button>
+      </div>
     </header>
 
     <StatusBar
