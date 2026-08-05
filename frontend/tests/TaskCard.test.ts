@@ -129,4 +129,33 @@ describe("紧凑任务行", () => {
       "需要用户补充输入。",
     )
   })
+
+  it("终态任务仍被监控时可以停止监控", async () => {
+    const wrapper = renderTask({
+      status: "completed",
+      completed_at: "2026-07-30T08:02:00Z",
+      monitored: true,
+      watch_mode: "persistent",
+    })
+
+    const stopButton = wrapper.get("[data-action='stop']")
+    expect(stopButton.text()).toBe("停止监控")
+
+    await stopButton.trigger("click")
+
+    expect(wrapper.emitted("stop")).toHaveLength(1)
+  })
+
+  it("终态任务未被监控时不显示监控操作", () => {
+    const wrapper = renderTask({
+      status: "completed",
+      completed_at: "2026-07-30T08:02:00Z",
+      monitored: false,
+      watch_mode: null,
+    })
+
+    expect(wrapper.find("[data-action='stop']").exists()).toBe(false)
+    expect(wrapper.find("[data-watch='current_turn']").exists()).toBe(false)
+    expect(wrapper.find("[data-watch='persistent']").exists()).toBe(false)
+  })
 })

@@ -1,5 +1,10 @@
 <script setup lang="ts">
-export type TaskFilter = "running" | "attention" | "recent" | "all"
+export type TaskFilter =
+  | "running"
+  | "monitored"
+  | "attention"
+  | "recent"
+  | "all"
 
 defineProps<{
   active: TaskFilter
@@ -12,6 +17,7 @@ defineEmits<{
 
 const tabs: Array<{ key: TaskFilter; label: string }> = [
   { key: "running", label: "运行中" },
+  { key: "monitored", label: "监控中" },
   { key: "attention", label: "需处理" },
   { key: "recent", label: "最近结束" },
   { key: "all", label: "全部" },

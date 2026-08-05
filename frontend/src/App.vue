@@ -84,6 +84,7 @@ const terminalStatuses = new Set([
 
 const counts = computed<Record<TaskFilter, number>>(() => ({
   running: tasks.value.filter((task) => task.status === "running").length,
+  monitored: tasks.value.filter((task) => task.monitored).length,
   attention: tasks.value.filter((task) =>
     attentionStatuses.has(task.status),
   ).length,
@@ -96,6 +97,9 @@ const counts = computed<Record<TaskFilter, number>>(() => ({
 const visibleTasks = computed(() => {
   if (activeFilter.value === "running") {
     return tasks.value.filter((task) => task.status === "running")
+  }
+  if (activeFilter.value === "monitored") {
+    return tasks.value.filter((task) => task.monitored)
   }
   if (activeFilter.value === "attention") {
     return tasks.value.filter((task) =>

@@ -275,6 +275,47 @@ describe("任务监控主页面", () => {
     expect(wrapper.text()).not.toContain("实现任务监控器")
   })
 
+  it("监控中筛选展示活动和终态监控任务并支持停止", async () => {
+    apiMocks.getTasks.mockResolvedValueOnce([
+      {
+        ...baseTask,
+        monitored: true,
+        watch_mode: "current_turn",
+      },
+      waitingTask,
+      {
+        ...completedTask,
+        monitored: true,
+        watch_mode: "persistent",
+      },
+    ])
+    const wrapper = await renderApp()
+
+    const monitoredFilter = wrapper.get(
+      "button[data-filter='monitored']",
+    )
+    expect(monitoredFilter.get(".filter-count").text()).toBe("2")
+
+    await monitoredFilter.trigger("click")
+
+    expect(wrapper.text()).toContain("实现任务监控器")
+    expect(wrapper.text()).toContain("已经完成的任务")
+    expect(wrapper.text()).not.toContain("等待用户确认")
+
+    const completedCard = wrapper
+      .findAll(".task-card")
+      .find((card) => card.text().includes("已经完成的任务"))
+    expect(completedCard).toBeDefined()
+
+    await completedCard!.get("[data-action='stop']").trigger("click")
+    await flushPromises()
+
+    expect(apiMocks.stopWatch).toHaveBeenCalledWith("thread-completed")
+    expect(wrapper.text()).not.toContain("已经完成的任务")
+    expect(wrapper.text()).toContain("实现任务监控器")
+    expect(monitoredFilter.get(".filter-count").text()).toBe("1")
+  })
+
   it("任务卡片展示项目分支和两种监控操作", async () => {
     const wrapper = await renderApp()
 

@@ -121,7 +121,7 @@ function handleContextMenu(event: MouseEvent): void {
     </dl>
 
     <footer class="task-row-actions" data-task-actions>
-      <template v-if="isActive(props.task) && !selectionMode">
+      <template v-if="!selectionMode">
         <button
           v-if="task.monitored"
           type="button"
@@ -132,7 +132,7 @@ function handleContextMenu(event: MouseEvent): void {
         >
           停止监控
         </button>
-        <template v-else>
+        <template v-else-if="isActive(props.task)">
           <button
             type="button"
             class="button button-primary"
