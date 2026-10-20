@@ -273,6 +273,146 @@ def test_new_turn_can_replace_previous_terminal_state() -> None:
     assert snapshot.status is TaskStatus.RUNNING
 
 
+def test_older_terminal_turn_does_not_replace_running_turn() -> None:
+    """旧文件迟到的中断不能覆盖最新轮次及其元数据。"""
+
+    from codex_task_monitor.monitoring.aggregator import TaskAggregator
+
+    aggregator = TaskAggregator()
+    now = datetime.now(UTC)
+    current = aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.RUNNING,
+            turn_id="turn-new",
+            started_at=now,
+            updated_at=now,
+            latest_summary="新轮次正在运行。",
+        )
+    )
+
+    snapshot = aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.INTERRUPTED,
+            turn_id="turn-old",
+            started_at=now - timedelta(minutes=10),
+            completed_at=now - timedelta(minutes=5),
+            updated_at=now - timedelta(minutes=5),
+            latest_summary="旧轮次已中断。",
+            authoritative=True,
+        )
+    )
+
+    assert snapshot == current
+
+
+def test_older_turn_without_start_time_uses_event_time() -> None:
+    """开始时间缺失时仍能通过轮次事件时间排除旧记录。"""
+
+    from codex_task_monitor.monitoring.aggregator import TaskAggregator
+
+    aggregator = TaskAggregator()
+    now = datetime.now(UTC)
+    current = aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.RUNNING,
+            turn_id="turn-new",
+            updated_at=now,
+        )
+    )
+
+    snapshot = aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.INTERRUPTED,
+            turn_id="turn-old",
+            updated_at=now - timedelta(minutes=5),
+            authoritative=True,
+        )
+    )
+
+    assert snapshot == current
+
+
+def test_older_turn_with_newer_metadata_timestamp_is_ignored() -> None:
+    """任务列表更新时间较新也不能让旧轮次覆盖当前轮次。"""
+
+    from codex_task_monitor.monitoring.aggregator import TaskAggregator
+
+    aggregator = TaskAggregator()
+    now = datetime.now(UTC)
+    aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.RUNNING,
+            turn_id="turn-new",
+            started_at=now,
+            updated_at=now,
+        )
+    )
+
+    snapshot = aggregator.apply_snapshot(
+        TaskSnapshot(
+            thread_id="thread-1",
+            title="侧栏任务名称",
+            source=SourceKind.APP_SERVER,
+            status=TaskStatus.INTERRUPTED,
+            turn_id="turn-old",
+            started_at=now - timedelta(minutes=10),
+            completed_at=now - timedelta(minutes=5),
+            updated_at=now + timedelta(minutes=1),
+        )
+    )
+
+    assert snapshot.turn_id == "turn-new"
+    assert snapshot.status is TaskStatus.RUNNING
+    assert snapshot.started_at == now
+    assert snapshot.completed_at is None
+    assert snapshot.title == "侧栏任务名称"
+
+
+def test_metadata_refresh_does_not_block_new_session_turn() -> None:
+    """无轮次的列表刷新不能阻止随后发现的新轮次。"""
+
+    from codex_task_monitor.monitoring.aggregator import TaskAggregator
+
+    aggregator = TaskAggregator()
+    now = datetime.now(UTC)
+    aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.INTERRUPTED,
+            turn_id="turn-old",
+            updated_at=now - timedelta(minutes=10),
+            authoritative=True,
+        )
+    )
+    aggregator.apply_snapshot(
+        TaskSnapshot(
+            thread_id="thread-1",
+            title="侧栏任务名称",
+            source=SourceKind.APP_SERVER,
+            status=TaskStatus.UNKNOWN,
+            updated_at=now,
+        )
+    )
+
+    snapshot = aggregator.apply(
+        _event(
+            source=SourceKind.SESSION,
+            status=TaskStatus.RUNNING,
+            turn_id="turn-new",
+            updated_at=now - timedelta(minutes=5),
+        )
+    )
+
+    assert snapshot.turn_id == "turn-new"
+    assert snapshot.status is TaskStatus.RUNNING
+    assert snapshot.completed_at is None
+
+
 def test_waiting_state_has_priority_over_running_for_same_turn() -> None:
     from codex_task_monitor.monitoring.aggregator import TaskAggregator
 

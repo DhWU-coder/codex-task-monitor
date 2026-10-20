@@ -348,6 +348,145 @@ async def test_baseline_completion_never_sends_message(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("newest_first", [True, False])
+async def test_multi_file_baselines_keep_new_turn_and_watch_active(
+    tmp_path: Path,
+    newest_first: bool,
+) -> None:
+    """同任务多文件的历史终态不能回退新轮次或关闭当前监控。"""
+
+    now = datetime.now(UTC)
+    old_started_at = now - timedelta(minutes=15)
+    old_completed_at = now - timedelta(minutes=10)
+    new_started_at = now - timedelta(minutes=5)
+    old_running = SourceEvent(
+        source=SourceKind.SESSION,
+        thread_id="thread-1",
+        turn_id="turn-old",
+        status=TaskStatus.RUNNING,
+        started_at=old_started_at,
+        updated_at=old_started_at,
+        baseline=True,
+    )
+    old_interrupted = old_running.model_copy(
+        update={
+            "status": TaskStatus.INTERRUPTED,
+            "completed_at": old_completed_at,
+            "updated_at": old_completed_at,
+            "authoritative": True,
+        }
+    )
+    new_running = old_running.model_copy(
+        update={
+            "turn_id": "turn-new",
+            "started_at": new_started_at,
+            "updated_at": new_started_at,
+        }
+    )
+    batch = [old_running, old_interrupted, new_running]
+    if newest_first:
+        batch = [new_running, old_running, old_interrupted]
+    runtime, notifier, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([batch]),
+    )
+    runtime.repository.save_watch(
+        thread_id="thread-1",
+        mode=WatchMode.CURRENT_TURN,
+        turn_id="turn-new",
+        baseline_status=TaskStatus.RUNNING,
+    )
+
+    await runtime.observe_once()
+
+    task = runtime.get_task("thread-1")
+    assert task is not None
+    assert task.turn_id == "turn-new"
+    assert task.status is TaskStatus.RUNNING
+    assert task.started_at == new_started_at
+    assert task.completed_at is None
+    assert task.monitored is True
+    watch = runtime.repository.get_watch("thread-1")
+    assert watch is not None
+    assert watch.active is True
+    assert notifier.messages == []
+    watch = await runtime.start_watch("thread-1", WatchMode.PERSISTENT)
+    assert watch.active is True
+    assert watch.turn_id == "turn-new"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["session", "notification", "snapshot"])
+async def test_stale_generation_preserves_manual_completion(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    """所有来源的旧轮次都不能清除当前人工结束记录或误发通知。"""
+
+    now = datetime.now(UTC)
+    running = _manual_completion_running_event(
+        started_at=now - timedelta(minutes=5),
+    )
+    runtime, notifier, _ = _runtime(
+        tmp_path,
+        observer=FakeObserver([[running]]),
+    )
+    await runtime.observe_once()
+    await runtime.start_watch("thread-manual", WatchMode.PERSISTENT)
+    marked = await runtime.mark_manual_completion("thread-manual")
+    old_started_at = now - timedelta(minutes=15)
+    old_completed_at = now - timedelta(minutes=10)
+
+    if source == "session":
+        runtime.observer = FakeObserver(
+            [[SourceEvent(
+                source=SourceKind.SESSION,
+                thread_id="thread-manual",
+                turn_id="turn-old",
+                status=TaskStatus.INTERRUPTED,
+                started_at=old_started_at,
+                completed_at=old_completed_at,
+                updated_at=old_completed_at,
+                authoritative=True,
+            )]],
+        )
+        await runtime.observe_once()
+    else:
+        old_turn = {
+            "id": "turn-old",
+            "status": "interrupted",
+            "startedAt": old_started_at.timestamp(),
+            "completedAt": old_completed_at.timestamp(),
+            "items": [],
+        }
+        if source == "notification":
+            await runtime.handle_notification(
+                {
+                    "method": "turn/completed",
+                    "params": {"threadId": "thread-manual", "turn": old_turn},
+                }
+            )
+        else:
+            old_thread = _app_thread(
+                "thread-manual",
+                "侧栏任务名称",
+                updated_at=int(now.timestamp()),
+            )
+            old_thread["turns"] = [old_turn]
+            runtime.app_client = StaticThreadListAppClient([old_thread])
+            await runtime.refresh_once()
+
+    task = runtime.get_task("thread-manual")
+    assert task is not None
+    assert task.turn_id == running.turn_id
+    assert task.status is TaskStatus.MANUALLY_COMPLETED
+    assert task.completed_at == marked.completed_at
+    assert task.monitored is True
+    assert runtime.repository.get_manual_completion("thread-manual") is not None
+    assert notifier.messages == []
+
+
+@pytest.mark.asyncio
 async def test_task_changes_are_published(tmp_path: Path) -> None:
     runtime, _, publisher = _runtime(tmp_path)
 

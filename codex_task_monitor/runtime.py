@@ -256,11 +256,15 @@ class RuntimeService:
         recent_cutoff = datetime.now(UTC) - timedelta(
             hours=self.config_service.load().codex.recent_completed_hours
         )
-        accepted_events = [
-            event for event in events if event.updated_at >= recent_cutoff
-        ]
+        # 同一任务的续接文件可能先新后旧被发现，按事件时间重建轮次顺序。
+        accepted_events = sorted(
+            (event for event in events if event.updated_at >= recent_cutoff),
+            key=lambda event: event.updated_at,
+        )
         applied_events: list[tuple[SourceEvent, TaskSnapshot]] = []
         for event in accepted_events:
+            if self.aggregator.is_stale_turn(event):
+                continue
             manual_completion = self._prepare_manual_completion(
                 thread_id=event.thread_id,
                 turn_id=event.turn_id,
@@ -275,6 +279,9 @@ class RuntimeService:
         self._deactivate_internal_watches()
         for event, snapshot in applied_events:
             if self.aggregator.is_hidden(event.thread_id):
+                continue
+            # 历史终态基线不能取消本批较新轮次的监控。
+            if event.baseline and self.aggregator.is_stale_turn(event):
                 continue
             await self._process_snapshot(
                 snapshot,
@@ -304,7 +311,7 @@ class RuntimeService:
         if not isinstance(method, str) or not isinstance(params, dict):
             return
         event = map_notification(method, params)
-        if event is None:
+        if event is None or self.aggregator.is_stale_turn(event):
             return
         manual_completion = self._prepare_manual_completion(
             thread_id=event.thread_id,
@@ -500,6 +507,8 @@ class RuntimeService:
     ) -> None:
         """补全项目信息并交给聚合与监控层。"""
 
+        if self.aggregator.is_stale_turn(snapshot):
+            return
         info = await resolve_project_info(
             snapshot.cwd,
             {"branch": snapshot.branch} if snapshot.branch else None,

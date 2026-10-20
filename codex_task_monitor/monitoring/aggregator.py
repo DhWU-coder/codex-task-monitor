@@ -30,6 +30,7 @@ class TaskAggregator:
 
     def __init__(self) -> None:
         self._tasks: dict[str, TaskSnapshot] = {}
+        self._turn_updated_at: dict[str, datetime] = {}
         self._app_server_titles: dict[str, str] = {}
         self._parent_thread_ids: dict[str, str] = {}
         self._app_server_thread_ids: set[str] = set()
@@ -46,6 +47,8 @@ class TaskAggregator:
             self._parent_thread_ids[event.thread_id] = event.parent_thread_id
             self._reconcile_internal_threads()
         current = self._tasks.get(event.thread_id)
+        if current is not None and self.is_stale_turn(event):
+            return current
         if (
             current is not None
             and event.source is SourceKind.SESSION
@@ -70,8 +73,44 @@ class TaskAggregator:
             snapshot = snapshot.model_copy(
                 update={"title": authoritative_title}
             )
+        if event.turn_id and event.status not in {
+            TaskStatus.UNKNOWN,
+            TaskStatus.SOURCE_ERROR,
+        }:
+            # 任务级列表刷新不代表轮次进展，只记录带轮次的有效事件时间。
+            event_time = event.completed_at or event.updated_at
+            previous_time = self._turn_updated_at.get(event.thread_id)
+            if (
+                current is None
+                or event.turn_id != current.turn_id
+                or previous_time is None
+            ):
+                self._turn_updated_at[event.thread_id] = event_time
+            else:
+                self._turn_updated_at[event.thread_id] = max(previous_time, event_time)
         self._tasks[event.thread_id] = snapshot
         return snapshot
+
+    def is_stale_turn(self, event: SourceEvent | TaskSnapshot) -> bool:
+        """判断输入是否属于较旧轮次，不受无轮次元数据刷新影响。"""
+
+        current = self._tasks.get(event.thread_id)
+        if (
+            current is None
+            or not current.turn_id
+            or not event.turn_id
+            or current.turn_id == event.turn_id
+        ):
+            return False
+        if (
+            current.started_at is not None
+            and event.started_at is not None
+            and current.started_at != event.started_at
+        ):
+            return event.started_at < current.started_at
+        latest_time = self._turn_updated_at.get(event.thread_id)
+        event_time = event.completed_at or event.updated_at
+        return latest_time is not None and event_time < latest_time
 
     def set_app_server_thread_ids(self, thread_ids: set[str]) -> None:
         """使用一次完整 App Server 列表更新侧栏可见任务。"""
